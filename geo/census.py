@@ -125,15 +125,22 @@ def population_for_zctas(zctas: Iterable[str]) -> dict[str, int | None]:
             missing.append(z)
     k = api_key()
     if missing and k:
-        for i in range(0, len(missing), 50):
-            chunk = missing[i:i + 50]
+        # Census API geography predicates do not accept a comma-separated list of
+        # ZCTAs in one `for=` value. Query each requested ZCTA individually so one
+        # invalid/missing geography cannot blank the whole batch.
+        for z in missing:
             try:
-                rows = net.get_json(CENSUS_API, {"get": "NAME,P1_001N",
-                                                 "for": "zip code tabulation area:" + ",".join(chunk), "key": k})
+                rows = net.get_json(
+                    CENSUS_API,
+                    {"get": "NAME,P1_001N",
+                     "for": f"zip code tabulation area:{z}",
+                     "key": k},
+                )
                 hdr = rows[0]
                 zi, pi = hdr.index("zip code tabulation area"), hdr.index("P1_001N")
                 for r in rows[1:]:
-                    out[r[zi]] = int(r[pi]); cache[f"zcta:{r[zi]}"] = int(r[pi])
+                    out[r[zi]] = int(r[pi])
+                    cache[f"zcta:{r[zi]}"] = int(r[pi])
             except (net.NetError, ValueError, IndexError):
                 pass
         _save_cache(cache)
@@ -157,16 +164,28 @@ def population_for_places(geoids: Iterable[str]) -> dict[str, int | None]:
     k = api_key()
     if by_state and k:
         for st, gs in by_state.items():
-            try:
-                rows = net.get_json(CENSUS_API, {"get": "NAME,P1_001N", "for": "place:" + ",".join(g[2:] for g in gs),
-                                                 "in": f"state:{st}", "key": k})
-                hdr = rows[0]
-                si, pi_, vi = hdr.index("state"), hdr.index("place"), hdr.index("P1_001N")
-                for r in rows[1:]:
-                    g = r[si] + r[pi_]
-                    out[g] = int(r[vi]); cache[f"place:{g}"] = int(r[vi])
-            except (net.NetError, ValueError, IndexError):
-                pass
+            # The Census API accepts one concrete place code (or a wildcard), not
+            # a comma-separated list such as "place:12345,67890". The old batching
+            # therefore worked only when a state happened to have one requested
+            # place, and silently returned no population for fires near several
+            # Census places. Query each GEOID independently.
+            for geoid in gs:
+                try:
+                    rows = net.get_json(
+                        CENSUS_API,
+                        {"get": "NAME,P1_001N",
+                         "for": f"place:{geoid[2:]}",
+                         "in": f"state:{st}",
+                         "key": k},
+                    )
+                    hdr = rows[0]
+                    si, pi_, vi = hdr.index("state"), hdr.index("place"), hdr.index("P1_001N")
+                    for r in rows[1:]:
+                        g = r[si] + r[pi_]
+                        out[g] = int(r[vi])
+                        cache[f"place:{g}"] = int(r[vi])
+                except (net.NetError, ValueError, IndexError):
+                    pass
         _save_cache(cache)
     for gs in by_state.values():
         for g in gs:
