@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -86,6 +87,10 @@ def fetch_places(bbox: tuple[float, float, float, float]) -> dict[str, Any]:
 # Population (Census Data API; optional key)
 # --------------------------------------------------------------------------- #
 def api_key() -> str | None:
+    # Streamlit exposes root-level Secrets as environment variables.
+    k = os.environ.get("CENSUS_API_KEY", "").strip()
+    if k:
+        return k
     if KEY_FILE.exists():
         k = KEY_FILE.read_text(encoding="utf-8").strip()
         return k or None
@@ -171,5 +176,5 @@ def population_for_places(geoids: Iterable[str]) -> dict[str, int | None]:
 
 def population_status() -> str:
     return ("Census API key present" if api_key() else
-            "No Census API key (data/census_api_key.txt): populations show Not verified. "
+            "No Census API key (CENSUS_API_KEY or data/census_api_key.txt): populations show Not verified. "
             "Free key: https://api.census.gov/data/key_signup.html")
