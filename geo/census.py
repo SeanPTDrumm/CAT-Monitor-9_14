@@ -119,7 +119,10 @@ def population_for_zctas(zctas: Iterable[str]) -> dict[str, int | None]:
     missing = []
     for z in zctas:
         key = f"zcta:{z}"
-        if key in cache:
+        # A cached null may be left over from an earlier failed/no-key lookup.
+        # Treat only a real numeric population as a cache hit; retry nulls now
+        # that the Census API is available.
+        if key in cache and cache[key] is not None:
             out[z] = cache[key]
         else:
             missing.append(z)
@@ -157,7 +160,9 @@ def population_for_places(geoids: Iterable[str]) -> dict[str, int | None]:
     by_state: dict[str, list[str]] = {}
     for g in geoids:
         key = f"place:{g}"
-        if key in cache:
+        # Do not let a stale cached null permanently suppress a fresh lookup.
+        # This matters after enabling/fixing the Census API on an existing app.
+        if key in cache and cache[key] is not None:
             out[g] = cache[key]
         else:
             by_state.setdefault(g[:2], []).append(g)
