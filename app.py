@@ -236,25 +236,27 @@ def moratorium_zip_set(recs: dict) -> set[str]:
 # --------------------------------------------------------------------------- #
 # Sidebar
 # --------------------------------------------------------------------------- #
-def data_controls(c) -> None:
+def data_controls(c, include_upload: bool = True) -> None:
     """Load / import widgets. Rendered into the sidebar on the legacy pages, and into
     the dashboard's own "Data" popover so the dashboard carries no admin sidebar."""
-    with c.expander("Upload files", expanded=False):
-        csv_up = st.file_uploader("WFIGS perimeter CSV", type=["csv"], key="csv_up")
-        geo_up = st.file_uploader("Matching GeoJSON (optional; fetched live if omitted)", type=["geojson", "json"], key="geo_up")
-        if st.button("Save snapshot from upload", disabled=csv_up is None, use_container_width=True):
-            with st.spinner("Saving snapshot and fetching live perimeters…"):
-                try:
-                    sid = snapshots.save_snapshot(
-                        csv_up.getvalue(), csv_up.name,
-                        geojson_bytes=geo_up.getvalue() if geo_up else None,
-                        geojson_filename=geo_up.name if geo_up else None,
-                        fetch_perimeters_if_missing=True)
-                    st.cache_data.clear()
-                    st.session_state["current_id"] = sid
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e))
+    if include_upload:
+        with c.expander("Upload files", expanded=False):
+            csv_up = st.file_uploader("WFIGS perimeter CSV", type=["csv"], key="csv_up")
+            geo_up = st.file_uploader("Matching GeoJSON (optional; fetched live if omitted)", type=["geojson", "json"], key="geo_up")
+            if st.button("Save snapshot from upload", disabled=csv_up is None, use_container_width=True):
+                with st.spinner("Saving snapshot and fetching live perimeters…"):
+                    try:
+                        sid = snapshots.save_snapshot(
+                            csv_up.getvalue(), csv_up.name,
+                            geojson_bytes=geo_up.getvalue() if geo_up else None,
+                            geojson_filename=geo_up.name if geo_up else None,
+                            fetch_perimeters_if_missing=True)
+                        st.cache_data.clear()
+                        st.session_state["current_id"] = sid
+                        st.session_state.pop(f"prior_pick_{sid}", None)
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
 
     with c.expander("Import from project folder", expanded=False):
         already = {m["csv_filename"] for m in snapshots.list_snapshots()}
@@ -676,21 +678,91 @@ def _iso(v) -> str | None:
 
 
 def _dashboard_data_controls(metas: list[dict]) -> None:
-    """The dashboard's data panel: the same widgets as the legacy sidebar, tucked into
-    a popover so the dashboard itself carries no admin panel.
+    """Simple daily WFIGS update workflow.
 
-    Also carries the analyst-name field. It used to live in the sidebar, so removing
-    the sidebar left `editor_name` unset and every dashboard-saved review was
-    attributed to "unknown" - the name has to be reachable from the dashboard.
+    The normal analyst path is:
+      1. upload the new CSV
+      2. upload its matching GeoJSON
+      3. Save & Compare
+
+    The new snapshot becomes current and the immediately preceding stored snapshot
+    is selected automatically for comparison. Maintenance tools stay under
+    Advanced / Admin.
     """
-    st.text_input("Your name (recorded on reviews)", key="editor_name",
-                  placeholder="e.g. Justin")
-    st.divider()
-    data_controls(st)          # an upload may change the current snapshot
-    if metas:
-        st.divider()
-        snapshot_controls(st, metas)
-        housekeeping_controls(st, metas)
+    current_id, prior_id = resolve_snapshots(metas) if metas else (None, None)
+    meta_by_id = {m["snapshot_id"]: m for m in metas}
+
+    if current_id:
+        cur_meta = meta_by_id.get(current_id)
+        prior_meta = meta_by_id.get(prior_id) if prior_id else None
+        st.markdown("**Current data:** " + when(cur_meta))
+        st.caption(
+            "Comparing with: " + (when(prior_meta) if prior_meta else "no prior snapshot selected")
+        )
+    else:
+        st.info("No snapshot is loaded yet. Upload the latest WFIGS files below.")
+
+    st.markdown("#### Daily update")
+    csv_up = st.file_uploader(
+        "WFIGS perimeter CSV",
+        type=["csv"],
+        key="daily_csv_up",
+    )
+    geo_up = st.file_uploader(
+        "Matching WFIGS GeoJSON",
+        type=["geojson", "json"],
+        key="daily_geo_up",
+        help="Recommended: upload the GeoJSON downloaded with the CSV so perimeter changes can be compared exactly.",
+    )
+
+    ready = csv_up is not None and geo_up is not None
+    if st.button(
+        "Save & Compare",
+        type="primary",
+        disabled=not ready,
+        use_container_width=True,
+        key="daily_save_compare",
+    ):
+        with st.spinner("Saving the new snapshot and preparing comparison…"):
+            try:
+                sid = snapshots.save_snapshot(
+                    csv_up.getvalue(),
+                    csv_up.name,
+                    geojson_bytes=geo_up.getvalue(),
+                    geojson_filename=geo_up.name,
+                    fetch_perimeters_if_missing=False,
+                )
+                st.cache_data.clear()
+
+                # Make the upload current. On rerun resolve_snapshots() will
+                # automatically choose the immediately preceding stored snapshot.
+                st.session_state["current_id"] = sid
+                st.session_state.pop(f"prior_pick_{sid}", None)
+
+                st.success("Snapshot saved. Comparing with the immediately previous snapshot.")
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+
+    if not ready:
+        st.caption("Upload both the CSV and matching GeoJSON to enable Save & Compare.")
+
+    with st.expander("Advanced / Admin", expanded=False):
+        st.text_input(
+            "Your name (recorded on reviews)",
+            key="editor_name",
+            placeholder="e.g. Justin",
+        )
+
+        # Keep the less-common import tools available without cluttering the daily workflow.
+        data_controls(st, include_upload=False)
+
+        refreshed = snapshots.list_snapshots()
+        if refreshed:
+            st.divider()
+            st.markdown("**Snapshot controls**")
+            snapshot_controls(st, refreshed)
+            housekeeping_controls(st, refreshed)
 
 
 def _compare_label(meta: dict, prior_meta: dict | None) -> str | None:
