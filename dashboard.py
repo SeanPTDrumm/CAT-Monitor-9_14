@@ -762,24 +762,38 @@ def _logo_data_uri(path_str: str, mtime: float) -> str | None:
 
 
 def _header(meta: dict, ctx: dict) -> None:
-    """Compact branded header: logo, title, and the one reviewer-facing timestamp."""
+    """Compact branded header plus a clear data-update workflow."""
     uri = _logo_data_uri(str(_LOGO), _LOGO.stat().st_mtime if _LOGO.exists() else 0.0)
-    left, right = st.columns([0.80, 0.20])
-    with left:
-        logo = (f"<img class='cm-head-logo' src='{uri}' alt='Hiscox'/>"
-                "<div class='cm-head-rule'></div>") if uri else ""
+
+    logo = (f"<img class='cm-head-logo' src='{uri}' alt='Hiscox'/>"
+            "<div class='cm-head-rule'></div>") if uri else ""
+
+    st.markdown(
+        "<div class='cm-head'>" + logo
+        + "<div class='cm-head-txt'>"
+          "<div class='cm-head-title'>CAT MONITOR</div>"
+          "<div class='cm-head-sub'>Wildfire monitoring</div></div>"
+          "<div class='cm-head-right'>"
+          "<div class='cm-head-stamp-l'>Data current</div>"
+          f"<div class='cm-head-stamp-v'>{ctx['fmt']['when'](meta)}</div></div>"
+          "</div>",
+        unsafe_allow_html=True,
+    )
+
+    pair_label = ctx.get("compare_label")
+    if pair_label:
         st.markdown(
-            "<div class='cm-head'>" + logo
-            + "<div class='cm-head-txt'>"
-              "<div class='cm-head-title'>CAT MONITOR</div>"
-              "<div class='cm-head-sub'>Wildfire monitoring</div></div>"
-              "<div class='cm-head-right'>"
-              "<div class='cm-head-stamp-l'>Data current</div>"
-              f"<div class='cm-head-stamp-v'>{ctx['fmt']['when'](meta)}</div></div>"
-              "</div>", unsafe_allow_html=True)
-    with right:
-        with st.popover("Data", use_container_width=True):
-            ctx["data_controls"]()
+            f"<div class='cm-note'><b>Comparing:</b> {pair_label}</div>",
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("UPDATE DATA — load a new WFIGS CSV + GeoJSON", expanded=False):
+        st.caption(
+            "Upload the newest WFIGS perimeter CSV and its matching GeoJSON. "
+            "After saving, CAT Monitor will make it current and automatically "
+            "compare it with the immediately preceding snapshot."
+        )
+        ctx["data_controls"]()
 
 
 # --------------------------------------------------------------------------- #
