@@ -9,6 +9,8 @@ Run:  streamlit run app.py
 
 UI Redesign: 2026-09-10 - Simplified dashboard with top 5 fires view
 """
+# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
+
 from __future__ import annotations
 
 import re

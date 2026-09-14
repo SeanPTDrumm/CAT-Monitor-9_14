@@ -27,6 +27,8 @@ Scope: these tokens are injected by `dashboard.render()` only. Fire Table and
 Fire Detail keep their original light appearance (locked decision - there is no
 global .streamlit/config.toml).
 """
+# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
+
 from __future__ import annotations
 
 # --------------------------------------------------------------------------- #

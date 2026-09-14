@@ -19,6 +19,8 @@ as it does. This module renders the same source geometry with dashboard cartogra
 
 Every number and outline comes from the stored source geometry. Nothing is sketched.
 """
+# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
+
 from __future__ import annotations
 
 import math

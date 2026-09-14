@@ -14,6 +14,8 @@ Scope rules honoured here:
   * Nothing is inferred - no population, evacuation, structures, barriers, scores.
   * Styling stays scoped to this page.
 """
+# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
+
 from __future__ import annotations
 
 from pathlib import Path

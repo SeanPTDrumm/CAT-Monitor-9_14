@@ -15,6 +15,8 @@ Storage: data/reviews.json
 Every saved Ignore or Monitor decision appends an entry. Entries are never edited
 or removed; a later review appends a new entry beside the earlier one.
 """
+# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
+
 from __future__ import annotations
 
 import json
