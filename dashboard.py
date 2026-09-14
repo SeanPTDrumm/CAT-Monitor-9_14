@@ -24,7 +24,6 @@ import pandas as pd
 import streamlit as st
 
 import attention
-import bands
 import dashboard_map
 import reviews
 import theme
@@ -34,11 +33,7 @@ SORT_WFIGS = "WFIGS Distance"
 SORT_PERIMETER = "Perimeter Distance"
 SORT_SIZE = "Fire Size"
 SORT_CONTAINMENT = "Containment"
-SORT_POPULATION = "Population Band"
-# "Exposure Context" is the reviewer-facing name for the provisional area bucket.
-# The underlying column and derivation are unchanged - this is the label only.
-SORT_BUCKET = "Exposure Context"
-SORT_CHOICES = [SORT_WFIGS, SORT_SIZE, SORT_CONTAINMENT, SORT_POPULATION, SORT_BUCKET]
+SORT_CHOICES = [SORT_WFIGS, SORT_SIZE, SORT_CONTAINMENT]
 
 SIZE_BREAKPOINT = 500.0        # handoff 4.2 - the only size breakpoint
 WFIGS_NEAR_MILES = 5.0         # handoff 4.1 / 6
@@ -477,10 +472,6 @@ def sort_fires(frame: pd.DataFrame, choice: str) -> pd.DataFrame:
     f["_perim"] = [perimeter_distance(_att(r)) for _, r in f.iterrows()]
     f["_size"] = [current_size(r) for _, r in f.iterrows()]
     f["_cont"] = [containment(r) for _, r in f.iterrows()]
-    f["_pop_key"] = f.get("population_band", pd.Series("Not available", index=f.index)).map(
-        bands.population_band_sort_key)
-    f["_bucket_key"] = f.get("area_bucket", pd.Series("Needs review", index=f.index)).map(
-        bands.area_bucket_sort_key)
     # Ties: lower containment first, then larger size. Unknown containment last.
     f["_cont_tie"] = f["_cont"].fillna(10_000)
     f["_size_tie"] = -f["_size"].fillna(-1)
@@ -491,36 +482,21 @@ def sort_fires(frame: pd.DataFrame, choice: str) -> pd.DataFrame:
         keys, asc = ["_size", "_cont_tie", "_size_tie"], [False, True, True]
     elif choice == SORT_CONTAINMENT:
         keys, asc = ["_cont", "_size_tie"], [True, True]
-    elif choice == SORT_POPULATION:
-        keys, asc = ["_pop_key", "_size_tie"], [True, True]
-    elif choice == SORT_BUCKET:
-        keys, asc = ["_bucket_key", "_size_tie"], [True, True]
     else:
         keys, asc = ["_wfigs", "_cont_tie", "_size_tie"], [True, True, True]
 
     return f.sort_values(keys, ascending=asc, na_position="last").drop(
-        columns=["_wfigs", "_perim", "_size", "_cont", "_pop_key", "_bucket_key",
-                 "_cont_tie", "_size_tie"])
+        columns=["_wfigs", "_perim", "_size", "_cont", "_cont_tie", "_size_tie"])
 
 
-def apply_filters(frame: pd.DataFrame, big_only: bool, near_only: bool,
-                  pop_bands: list[str] | None = None,
-                  area_buckets: list[str] | None = None) -> pd.DataFrame:
-    """Optional filters. They narrow the view only; they record no decision.
-
-    Population/Area Bucket filters match against the already-cached
-    `population_band`/`area_bucket` columns - no recomputation."""
+def apply_filters(frame: pd.DataFrame, big_only: bool, near_only: bool) -> pd.DataFrame:
+    """Optional size/distance filters only. They narrow the view and record no decision."""
     f = frame
     if big_only:
         f = f[[(current_size(r) or -1) >= SIZE_BREAKPOINT for _, r in f.iterrows()]]
     if near_only:
-        # Always WFIGS Distance, whatever the sort. Missing values do not pass.
         f = f[[(wfigs_distance(r) is not None and wfigs_distance(r) <= WFIGS_NEAR_MILES)
                for _, r in f.iterrows()]]
-    if pop_bands:
-        f = f[f["population_band"].isin(pop_bands)]
-    if area_buckets:
-        f = f[f["area_bucket"].isin(area_buckets)]
     return f
 
 
@@ -782,7 +758,7 @@ def _header(meta: dict, ctx: dict) -> None:
 # --------------------------------------------------------------------------- #
 # Controls - one compact toolbar
 # --------------------------------------------------------------------------- #
-_FILTER_KEYS = ("cm_f_big", "cm_f_near", "cm_f_pop", "cm_f_bucket")
+_FILTER_KEYS = ("cm_f_big", "cm_f_near")
 
 
 def _clear_filters() -> None:
@@ -790,21 +766,18 @@ def _clear_filters() -> None:
     optional filters off, and no change-category narrowing."""
     st.session_state["cm_f_big"] = True
     st.session_state["cm_f_near"] = True
-    st.session_state["cm_f_pop"] = []
-    st.session_state["cm_f_bucket"] = []
     st.session_state["cm_change_filter"] = None
 
 
-def _controls() -> tuple[str, bool, bool, list[str], list[str]]:
-    """Sort plus the four optional filters, on one compact row.
+def _controls() -> tuple[str, bool, bool]:
+    """Reviewer-facing controls: sort plus size/distance filters only.
 
-    500+ acres and Within 5 miles are CHECKED by default - that pair is the
-    visible operational display standard, and Show all is always one click away.
-    Filtering never records a decision or changes underlying data.
+    Population and exposure buckets are intentionally removed until the source data
+    and classification rules are validated.
     """
     with st.container(key="cm_tools"):
-        c1, c2, c3, c4, c5, c6 = st.columns([0.22, 0.14, 0.16, 0.18, 0.20, 0.10],
-                                            gap="small", vertical_alignment="center")
+        c1, c2, c3, c4 = st.columns([0.40, 0.20, 0.20, 0.20],
+                                    gap="small", vertical_alignment="center")
         with c1:
             st.markdown("<div class='cm-tool-l'>Sort</div>", unsafe_allow_html=True)
             choice = st.selectbox("Sort", SORT_CHOICES, key="cm_sort",
@@ -814,22 +787,11 @@ def _controls() -> tuple[str, bool, bool, list[str], list[str]]:
         with c3:
             near = st.checkbox("Within 5 miles", value=True, key="cm_f_near")
         with c4:
-            st.markdown("<div class='cm-tool-l'>Population</div>", unsafe_allow_html=True)
-            pop_bands = st.multiselect("Population", bands.POPULATION_BANDS,
-                                       key="cm_f_pop", placeholder="All",
-                                       label_visibility="collapsed")
-        with c5:
-            st.markdown("<div class='cm-tool-l'>Exposure context</div>",
-                        unsafe_allow_html=True)
-            area_buckets = st.multiselect("Exposure context", bands.AREA_BUCKETS,
-                                          key="cm_f_bucket", placeholder="All",
-                                          label_visibility="collapsed")
-        with c6:
             st.markdown("<div class='cm-tool-l'>&nbsp;</div>", unsafe_allow_html=True)
             if st.button("Show all", key="cm_clear_filters", use_container_width=True):
                 _clear_filters()
                 st.rerun()
-    return choice, big, near, pop_bands, area_buckets
+    return choice, big, near
 
 
 # --------------------------------------------------------------------------- #
@@ -864,16 +826,10 @@ def _change_indicator(row: Any) -> tuple[str, str] | None:
 
 
 def _row_population(row: Any, att: dict[str, Any]) -> str:
-    """Exact cached population for the WFIGS place when the spatial result names
-    that same place; otherwise the band. Never fabricated, never omitted."""
+    """Show only an exact verified Census population; never substitute a bucket."""
     prox = att.get("proximity") or {}
-    place = row.get("origin_place")
-    pop, prox_place = prox.get("population"), prox.get("place")
-    if (pop is not None and place and prox_place
-            and str(place).strip().lower() in str(prox_place).strip().lower()):
-        return f"pop. {pop:,}"
-    band = row.get("population_band")
-    return f"pop. {band}" if band and band != "Not available" else "pop. not verified"
+    pop = prox.get("population")
+    return f"pop. {pop:,}" if pop is not None else "pop. not verified"
 
 
 def _row_location(row: Any) -> str:
@@ -1085,24 +1041,14 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
     zs = nearby_zctas(att)
     _fact("Nearby ZIPs", f"{len(zs)}" if zs else None,
           "within 5 mi of the perimeter" if zs else None)
-    _fact("Population band", row.get("population_band", "Not available"))
-
-    confirmed = (state["review"] or {}).get("area_bucket") if state["review"] else None
-    bucket = confirmed or row.get("area_bucket", "Needs review")
-    _fact("Exposure context", bucket, "Confirmed at review" if confirmed else "Provisional")
-
-    if zs or (row.get("area_bucket_factors") or []):
+    if zs:
         with st.expander("ZIP detail", expanded=False):
-            if zs:
-                st.markdown("".join(f"<span class='cm-badge'>{z}</span>" for z in zs),
-                            unsafe_allow_html=True)
-                st.markdown("<div class='cm-f-n' style='text-align:left'>Census ZIP Code "
-                            "Tabulation Areas within 5 mi of the perimeter, nearest first. "
-                            "ZCTAs are not USPS delivery ZIPs - confirm before use.</div>",
-                            unsafe_allow_html=True)
-            for factor in row.get("area_bucket_factors", []) or []:
-                st.markdown(f"<div class='cm-f-n' style='text-align:left'>&bull; {factor}</div>",
-                            unsafe_allow_html=True)
+            st.markdown("".join(f"<span class='cm-badge'>{z}</span>" for z in zs),
+                        unsafe_allow_html=True)
+            st.markdown("<div class='cm-f-n' style='text-align:left'>Census ZIP Code "
+                        "Tabulation Areas within 5 mi of the perimeter, nearest first. "
+                        "ZCTAs are not USPS delivery ZIPs - confirm before use.</div>",
+                        unsafe_allow_html=True)
 
     # ---- REVIEW
     st.markdown("<div class='cm-sec-i'>Review</div>", unsafe_allow_html=True)
@@ -1202,15 +1148,6 @@ def _review_form(row: pd.Series, disposition: str, store: dict, ctx: dict) -> No
         save_map = st.checkbox("Save current map image with this review",
                                value=False, key="cm_form_map")
 
-        st.markdown("<div class='cm-sec'>Area bucket</div>", unsafe_allow_html=True)
-        provisional_bucket = row.get("area_bucket", "Needs review")
-        for factor in row.get("area_bucket_factors", []) or []:
-            st.markdown(f"<div class='cm-sub'>&bull; {factor}</div>", unsafe_allow_html=True)
-        bucket_idx = (bands.AREA_BUCKETS.index(provisional_bucket)
-                     if provisional_bucket in bands.AREA_BUCKETS else 0)
-        bucket_choice = st.selectbox("Area Bucket", bands.AREA_BUCKETS, index=bucket_idx,
-                                     key="cm_form_bucket")
-
         st.markdown("<div class='cm-sec'>System snapshot at review</div>",
                     unsafe_allow_html=True)
         lines = [f"{size:,.0f} acres" if size is not None else "size unavailable",
@@ -1234,7 +1171,7 @@ def _review_form(row: pd.Series, disposition: str, store: dict, ctx: dict) -> No
         st.session_state.pop("cm_form", None)
         st.rerun()
     if submitted:
-        ctx["save_review"](row, chosen, rationale, save_map, bucket_choice)
+        ctx["save_review"](row, chosen, rationale, save_map)
 
 
 def evidence_for(row: pd.Series, meta: dict) -> dict[str, Any]:
@@ -1395,13 +1332,13 @@ def render(df: pd.DataFrame, meta: dict, ctx: dict, secondary: Callable[[], None
     note = ctx.get("perimeter_note")
 
     pool = dashboard_fires(df, store)
-    sort_choice, big, near, pop_bands, area_buckets = _controls()
+    sort_choice, big, near = _controls()
 
     # The left side is always the fire list. Change information is shown on each
     # fire row and expanded in the selected-fire panel, rather than through
     # separate change-category buttons.
     view = sort_fires(
-        apply_filters(pool, big, near, pop_bands, area_buckets),
+        apply_filters(pool, big, near),
         sort_choice,
     )
 

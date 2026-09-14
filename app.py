@@ -21,7 +21,6 @@ import streamlit as st
 
 import analyst
 import attention
-import bands
 import baseline
 import dashboard
 import dashboard_map
@@ -186,25 +185,6 @@ def _load_inputs_cached(snapshot_id: str, irwin_id: str, version: str):
     per-snapshot spatial-file signature used by _spatial_all."""
     return analysis.load_inputs(snapshot_id, irwin_id)
 
-
-@st.cache_data(show_spinner=False)
-def _bands_all(snapshot_id: str, version: str) -> dict:
-    """Population Band + provisional Area Bucket for every fire with computed
-    geography in this snapshot, computed once per spatial-version and reused
-    across every rerun. Pure function of already-cached spatial data - no
-    network call, no geography/Census recomputation."""
-    sp_all = _spatial_all(snapshot_id, version)
-    out = {}
-    for iid, sp in sp_all.items():
-        pop = None
-        if sp and sp.get("status") == "calculated":
-            places = (sp.get("spatial") or {}).get("places") or []
-            if places:
-                pop = places[0].get("population_2020")
-        bucket, factors = bands.area_bucket(sp)
-        out[iid] = {"population_band": bands.population_band(pop),
-                    "area_bucket": bucket, "area_bucket_factors": factors}
-    return out
 
 
 def _records() -> dict:
@@ -474,17 +454,6 @@ def build_frame(merged: pd.DataFrame, snapshot_id: str, prior_id: str | None) ->
     sp_all = _spatial_all(snapshot_id, _spatial_version(snapshot_id))
     sp_prior = _spatial_all(prior_id, _spatial_version(prior_id)) if prior_id else {}
     mora_zips = set()  # moratorium_zip_set(recs)  # Temporarily disabled
-
-    # Population Band + provisional Area Bucket: computed once per snapshot
-    # (cached in-memory, keyed on the spatial-file version - see _bands_all),
-    # never recomputed here. Pure lookup/merge only.
-    bands_all = _bands_all(snapshot_id, _spatial_version(snapshot_id))
-    df["population_band"] = [bands_all.get(iid, {}).get("population_band", "Not available")
-                             for iid in df["irwin_id"]]
-    df["area_bucket"] = [bands_all.get(iid, {}).get("area_bucket", "Needs review")
-                         for iid in df["irwin_id"]]
-    df["area_bucket_factors"] = [bands_all.get(iid, {}).get("area_bucket_factors", [])
-                                 for iid in df["irwin_id"]]
 
     cols = {k: [] for k in ("geo_status", "geo_reason", "perim_place_miles", "nearest_place", "zcta_verify",
                             "zcta_review_n", "zcta_in_moratorium", "urgency_level", "urgency_label", "urgency_reason",
@@ -823,7 +792,7 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
     perimeter_note = _perimeter_note(meta, prior_meta)
 
     def save_review(row: pd.Series, disposition: str, rationale: str,
-                    save_map: bool, area_bucket: str | None = None) -> None:
+                    save_map: bool) -> None:
         """Persist one Ignore or Monitor review, then rerender from what was stored.
 
         Disposition is not treated as changed until persistence succeeds, and a
@@ -848,7 +817,7 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
                 store, iid, row["fire_name"], disposition=disposition,
                 reviewer=_editor(), rationale=rationale, snapshot_id=sid,
                 evidence=dashboard.evidence_for(row, meta), map_image=map_name,
-                review_id=review_id, area_bucket=area_bucket)
+                review_id=review_id)
             reviews.save(store)
         except (OSError, ValueError) as e:
             st.error(f"The review could not be saved: {e}. Nothing was changed.")
@@ -888,7 +857,6 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
         "review_store": store,
         "spatial_all": lambda s: _spatial_all(s, _spatial_version(s)),
         "load_inputs": lambda s, iid: _load_inputs_cached(s, iid, _spatial_version(s)),
-        "bands_all": lambda s: _bands_all(s, _spatial_version(s)),
         "run_geography": lambda fires: run_geography(sid, fires),
         "goto_detail": _goto_detail,
         "save_review": save_review,
