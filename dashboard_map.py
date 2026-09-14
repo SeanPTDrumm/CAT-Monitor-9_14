@@ -67,8 +67,10 @@ ZIP_LAYER_ID = "cm-zips"
 
 # Distance-ring choices. Off by default so rings do not occupy every review.
 RING_OFF = "Off"
-RING_CHOICES = [RING_OFF, "1 mile", "3 miles", "5 miles", "10 miles", "All"]
-_RING_MILES = {"1 mile": (1.0,), "3 miles": (3.0,), "5 miles": (5.0,),
+RING_REVIEW = "1 / 3 / 5 miles"
+RING_CHOICES = [RING_OFF, RING_REVIEW, "1 mile", "3 miles", "5 miles", "10 miles", "All"]
+_RING_MILES = {RING_REVIEW: (1.0, 3.0, 5.0),
+               "1 mile": (1.0,), "3 miles": (3.0,), "5 miles": (5.0,),
                "10 miles": (10.0,), "All": (1.0, 3.0, 5.0, 10.0)}
 
 MILES_PER_DEG_LAT = 69.0

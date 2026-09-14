@@ -98,12 +98,14 @@ def disposition(store: dict[str, list[dict[str, Any]]], irwin_id: str) -> str | 
 
 def add_review(store: dict[str, list[dict[str, Any]]], irwin_id: str, fire_name: str | None, *,
                disposition: str, reviewer: str | None, rationale: str = "",
+               quick_reason: str | None = None,
                snapshot_id: str | None = None, evidence: dict[str, Any] | None = None,
                map_image: str | None = None, review_id: str | None = None,
                logged: bool = False) -> dict[str, Any]:
     """Append one review entry. Returns the stored entry.
 
     `rationale` is preserved exactly, including line breaks, and is optional.
+    `quick_reason` is an optional reviewer convenience label; it is never inferred.
     `evidence` records only what the reviewer could actually see; absent facts stay
     absent and are never backfilled later.
     `logged` marks the intentional evidence record used when the reviewer wants a
@@ -124,6 +126,7 @@ def add_review(store: dict[str, list[dict[str, Any]]], irwin_id: str, fire_name:
         "timestamp": _now(),
         "disposition": disposition,
         "rationale": rationale or "",
+        "quick_reason": (quick_reason or "").strip() or None,
         "snapshot_id": snapshot_id,
         "evidence": ev,
         "map_image": map_image,

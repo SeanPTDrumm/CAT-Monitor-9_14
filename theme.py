@@ -58,7 +58,7 @@ FONT = "Arial, Helvetica, sans-serif"   # Arial is what the bulletins use
 # --------------------------------------------------------------------------- #
 # Keys match dashboard.review_state()["tone"].
 REVIEW_STATE: dict[str, dict[str, str]] = {
-    "required":   {"accent": RED,        "glyph": "◆", "label": "INITIAL"},
+    "required":   {"accent": RED,        "glyph": "◆", "label": "NOT REVIEWED"},
     "monitoring": {"accent": TEXT,       "glyph": "◉", "label": "MONITOR"},
     "no_action":  {"accent": TEXT_FAINT, "glyph": "○", "label": "NO ACTION"},
     "moratorium": {"accent": RED,        "glyph": "■", "label": "MORATORIUM"},
@@ -101,15 +101,16 @@ MAP_ZIP_SEL_WIDTH = 2.8
 MAP_ZIP_INSIDE_WIDTH = 2.2
 MAP_MORATORIUM_WIDTH = 2.4
 
-# Distance rings: thin, transparent, progressively more muted outward.
+# Distance rings: intentionally visible on the pale CARTO basemap.
+# These are underwriting reference distances, not decoration.
 MAP_RING_LINE = {
-    1: rgb(TEXT, 150),
-    3: rgb(TEXT, 120),
-    5: rgb(TEXT_MUTED, 105),
-    10: rgb(TEXT_MUTED, 80),
+    1: rgb(BORDER, 235),
+    3: rgb(BORDER, 205),
+    5: rgb(BORDER, 175),
+    10: rgb(BORDER, 120),
 }
 MAP_RING_FILL = [0, 0, 0, 0]        # never filled
-MAP_RING_WIDTH = 1.1
+MAP_RING_WIDTH = 1.9
 
 MAP_PLACE = rgb(TEXT, 235)
 MAP_PLACE_NEAREST = rgb(RED, 255)   # the nearest place is the one that matters

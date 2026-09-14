@@ -29,14 +29,26 @@ import reviews
 import theme
 
 # Sort choices (handoff 5.3). WFIGS Distance is the default, nearest first.
+SORT_QUEUE = "Review Queue"
 SORT_WFIGS = "WFIGS Distance"
 SORT_PERIMETER = "Perimeter Distance"
 SORT_SIZE = "Fire Size"
 SORT_CONTAINMENT = "Containment"
-SORT_CHOICES = [SORT_WFIGS, SORT_SIZE, SORT_CONTAINMENT]
+SORT_CHOICES = [SORT_QUEUE, SORT_WFIGS, SORT_SIZE, SORT_CONTAINMENT]
 
 SIZE_BREAKPOINT = 500.0        # handoff 4.2 - the only size breakpoint
 WFIGS_NEAR_MILES = 5.0         # handoff 4.1 / 6
+
+QUICK_REASON_OPTIONAL = "— Optional —"
+QUICK_REASON_INVESTIGATE = "Needs further investigation"
+QUICK_REASONS = [
+    QUICK_REASON_OPTIONAL,
+    "Low risk / limited exposure",
+    "Containment good / improving",
+    "No material change",
+    QUICK_REASON_INVESTIGATE,
+    "Other",
+]
 
 # Containment bands (handoff 4.3). Exact, and always shown with the number.
 CONTAINMENT_UNAVAILABLE = "#8a9099"
@@ -163,6 +175,10 @@ _CSS_TEMPLATE = Template("""
                color: $TEXT_FAINT; font-weight: 700; margin: 0 0 2px 0; }
   .cm-count { font-size: .7rem; color: $TEXT_MUTED; font-variant-numeric: tabular-nums; }
   .cm-count b { color: $TEXT; }
+  .cm-q-head { font-size: .60rem; text-transform: uppercase; letter-spacing: .14em;
+                color: $TEXT_FAINT; font-weight: 700; padding: 9px 8px 4px 8px;
+                border-bottom: 1px solid $BORDER_SOFT; background: $SURFACE_SUNKEN; }
+  .cm-q-head:first-child { padding-top: 5px; }
 
   /* Widgets: one compact dark treatment, no default white blocks.
      This Streamlit build renders selects/multiselects as react-aria
@@ -468,22 +484,68 @@ def _att(row: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Sorting and filtering (handoff 5.3 and 6)
 # --------------------------------------------------------------------------- #
-def sort_fires(frame: pd.DataFrame, choice: str) -> pd.DataFrame:
-    """Sort, with ties broken by lower containment then larger size (handoff 5.3).
+def _queue_group(row: Any, store: dict, snapshot_id: str | None) -> int:
+    """0 = needs review, 1 = tracked, 2 = reviewed/no action for this snapshot."""
+    latest = reviews.latest(store, row["irwin_id"])
+    att = _att(row)
+    if latest is None:
+        return 0
 
-    Perimeter Distance sorts only on verified values; fires without one sort after
-    every verified value and are never filled in with WFIGS Distance.
+    disp = reviews.disposition(store, row["irwin_id"])
+    same_snapshot = bool(snapshot_id and latest.get("snapshot_id") == snapshot_id)
+    if latest.get("quick_reason") == QUICK_REASON_INVESTIGATE:
+        return 0
+
+    if disp in (reviews.MONITOR, reviews.MORATORIUM):
+        return 1
+    if disp == reviews.NO_ACTION:
+        # A No Action decision stays at the bottom for the snapshot in which it was
+        # completed. On a later upload it resurfaces as work only if the screening
+        # layer says the fire again requires attention.
+        if same_snapshot:
+            return 2
+        return 0 if att.get("requires_attention") else 2
+    return 0
+
+
+def sort_fires(frame: pd.DataFrame, choice: str, store: dict | None = None,
+               snapshot_id: str | None = None) -> pd.DataFrame:
+    """Reviewer queue first; alternate factual sorts remain available.
+
+    Review Queue contains no hidden score. Within each review-state group it uses
+    visible facts: ZIP intersection, 500+ acre breakpoint, containment, acreage,
+    perimeter-to-place distance, and verified population.
     """
     f = frame.copy()
     f["_wfigs"] = [wfigs_distance(r) for _, r in f.iterrows()]
     f["_perim"] = [perimeter_distance(_att(r)) for _, r in f.iterrows()]
     f["_size"] = [current_size(r) for _, r in f.iterrows()]
     f["_cont"] = [containment(r) for _, r in f.iterrows()]
-    # Ties: lower containment first, then larger size. Unknown containment last.
     f["_cont_tie"] = f["_cont"].fillna(10_000)
     f["_size_tie"] = -f["_size"].fillna(-1)
 
-    if choice == SORT_PERIMETER:
+    if choice == SORT_QUEUE and store is not None:
+        f["_q_group"] = [_queue_group(r, store, snapshot_id) for _, r in f.iterrows()]
+        f["_zip_intersect"] = [
+            0 if ((_att(r).get("proximity") or {}).get("intersects_zcta")) else 1
+            for _, r in f.iterrows()
+        ]
+        f["_near5"] = [
+            0 if (perimeter_distance(_att(r)) is not None
+                  and perimeter_distance(_att(r)) <= WFIGS_NEAR_MILES) else 1
+            for _, r in f.iterrows()
+        ]
+        f["_size500"] = [0 if (current_size(r) or -1) >= SIZE_BREAKPOINT else 1
+                         for _, r in f.iterrows()]
+        f["_pop"] = [
+            -float(((_att(r).get("proximity") or {}).get("population")))
+            if ((_att(r).get("proximity") or {}).get("population")) is not None else 1e18
+            for _, r in f.iterrows()
+        ]
+        keys = ["_q_group", "_zip_intersect", "_near5", "_size500", "_cont_tie",
+                "_size_tie", "_perim", "_pop"]
+        asc = [True, True, True, True, True, True, True, True]
+    elif choice == SORT_PERIMETER:
         keys, asc = ["_perim", "_cont_tie", "_size_tie"], [True, True, True]
     elif choice == SORT_SIZE:
         keys, asc = ["_size", "_cont_tie", "_size_tie"], [False, True, True]
@@ -492,8 +554,11 @@ def sort_fires(frame: pd.DataFrame, choice: str) -> pd.DataFrame:
     else:
         keys, asc = ["_wfigs", "_cont_tie", "_size_tie"], [True, True, True]
 
-    return f.sort_values(keys, ascending=asc, na_position="last").drop(
-        columns=["_wfigs", "_perim", "_size", "_cont", "_cont_tie", "_size_tie"])
+    helper_cols = [c for c in (
+        "_wfigs", "_perim", "_size", "_cont", "_cont_tie", "_size_tie",
+        "_q_group", "_zip_intersect", "_near5", "_size500", "_pop"
+    ) if c in f.columns]
+    return f.sort_values(keys, ascending=asc, na_position="last").drop(columns=helper_cols)
 
 
 def apply_filters(frame: pd.DataFrame, big_only: bool, near_only: bool) -> pd.DataFrame:
@@ -507,24 +572,34 @@ def apply_filters(frame: pd.DataFrame, big_only: bool, near_only: bool) -> pd.Da
     return f
 
 
-def dashboard_fires(df: pd.DataFrame, store: dict) -> pd.DataFrame:
-    """The main dashboard population.
+def dashboard_fires(df: pd.DataFrame, store: dict,
+                    snapshot_id: str | None = None) -> pd.DataFrame:
+    """Build the day's work queue.
 
-    Preserves the application's existing queue logic and adds only the two
-    dispositions that affect visibility:
-      * Alaska fires are hidden (handoff 3).
-      * Ignored fires stay off the list unless existing change logic resurfaces them.
-    Monitored fires stay on the list after every upload.
+    * Unreviewed fires surface from the existing attention/screening logic.
+    * Monitor and Moratorium remain tracked.
+    * No Action remains visible at the bottom for the snapshot in which it was
+      reviewed, then stays quiet on later uploads unless the fire resurfaces.
     """
     keep: list[bool] = []
     for _, r in df.iterrows():
         att = _att(r)
+        latest = reviews.latest(store, r["irwin_id"])
+        disp = reviews.disposition(store, r["irwin_id"])
+
         if att.get("alaska"):
-            keep.append(False)              # hidden, but the source record stays
-        elif reviews.disposition(store, r["irwin_id"]) in (reviews.MONITOR, reviews.MORATORIUM):
-            keep.append(True)               # tracked states stay visible after every upload
-        elif reviews.disposition(store, r["irwin_id"]) == reviews.NO_ACTION:
-            keep.append(bool(att.get("requires_attention")))   # only if resurfaced
+            keep.append(False)
+        elif latest is None:
+            # Day 1 baseline: every non-Alaska fire gets a human look. The queue
+            # ordering puts the consequential fires first so obvious low-concern
+            # fires can be cleared rapidly.
+            keep.append(True)
+        elif latest and snapshot_id and latest.get("snapshot_id") == snapshot_id:
+            keep.append(True)       # completed today: stays visible, but moves down
+        elif disp in (reviews.MONITOR, reviews.MORATORIUM):
+            keep.append(True)       # intentionally tracked across uploads
+        elif disp == reviews.NO_ACTION:
+            keep.append(bool(att.get("requires_attention")))  # resurfaced only
         else:
             keep.append(att.get("bucket") in (attention.BUCKET_ATTENTION,
                                               attention.BUCKET_MONITORING))
@@ -534,7 +609,7 @@ def dashboard_fires(df: pd.DataFrame, store: dict) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Review state (handoff 9)
 # --------------------------------------------------------------------------- #
-def review_state(row: Any, store: dict) -> dict[str, Any]:
+def review_state(row: Any, store: dict, snapshot_id: str | None = None) -> dict[str, Any]:
     """Human review state plus change context."""
     latest = reviews.latest(store, row["irwin_id"])
     att = _att(row)
@@ -544,13 +619,26 @@ def review_state(row: Any, store: dict) -> dict[str, Any]:
         when = f"Last reviewed by {latest.get('reviewer') or 'unknown'} on {_pretty(ts)}."
 
     if latest is None:
-        return {"label": "INITIAL", "tone": "required", "accent": TONE["required"],
+        return {"label": "NOT REVIEWED", "tone": "required", "accent": TONE["required"],
                 "detail": "Not previously reviewed.", "review": None,
                 "changes": [], "when": None}
 
     current = {"acres": current_size(row), "containment": containment(row)}
     changes = reviews.changes_since(latest, current)
     disp = reviews.disposition(store, row["irwin_id"])
+    same_snapshot = bool(snapshot_id and latest.get("snapshot_id") == snapshot_id)
+
+    if latest.get("quick_reason") == QUICK_REASON_INVESTIGATE:
+        return {"label": "INVESTIGATE", "tone": "required", "accent": TONE["required"],
+                "when": when, "detail": "Marked for further investigation.",
+                "review": latest, "changes": changes}
+
+    # A prior No Action fire that resurfaces is work again; do not leave a stale
+    # NO ACTION badge on a fire the current screening logic says needs attention.
+    if disp == reviews.NO_ACTION and not same_snapshot and att.get("requires_attention"):
+        return {"label": "REVIEW NEEDED", "tone": "required", "accent": TONE["required"],
+                "when": when, "detail": "Changed since the prior review.",
+                "review": latest, "changes": changes}
 
     if disp == reviews.MONITOR:
         tone, label = "monitoring", "MONITOR"
@@ -766,20 +854,13 @@ def _clear_filters() -> None:
     st.session_state["cm_change_filter"] = None
 
 
-def _controls() -> tuple[str, bool, bool]:
-    """Small optional narrowing controls. No hidden reset action."""
+def _controls() -> str:
+    """Primary work-queue ordering, with alternate factual sorts available."""
     with st.container(key="cm_tools"):
-        c1, c2, c3 = st.columns([0.50, 0.25, 0.25],
-                                gap="small", vertical_alignment="center")
-        with c1:
-            st.markdown("<div class='cm-tool-l'>Sort</div>", unsafe_allow_html=True)
-            choice = st.selectbox("Sort", SORT_CHOICES, key="cm_sort",
-                                  label_visibility="collapsed")
-        with c2:
-            big = st.checkbox("500+ acres", value=True, key="cm_f_big")
-        with c3:
-            near = st.checkbox("Within 5 miles", value=True, key="cm_f_near")
-    return choice, big, near
+        st.markdown("<div class='cm-tool-l'>Queue order</div>", unsafe_allow_html=True)
+        choice = st.selectbox("Queue order", SORT_CHOICES, key="cm_sort_v12",
+                              label_visibility="collapsed")
+    return choice
 
 
 # --------------------------------------------------------------------------- #
@@ -841,12 +922,19 @@ def _fire_list(frame: pd.DataFrame, selected: str | None, sort_choice: str,
     could not reach this density.
     """
     picked = None
+    last_section = None
+    section_names = {0: "TO REVIEW", 1: "TRACKING", 2: "REVIEWED — NO ACTION"}
     with st.container(key="cm_list"):
         for _, r in frame.iterrows():
+            qg = _queue_group(r, store, ctx.get("snapshot_id"))
+            section = section_names.get(qg, "TO REVIEW")
+            if section != last_section:
+                st.markdown(f"<div class='cm-q-head'>{section}</div>", unsafe_allow_html=True)
+                last_section = section
             iid = r["irwin_id"]
             att = _att(r)
             size, cont = current_size(r), containment(r)
-            state = review_state(r, store)
+            state = review_state(r, store, ctx.get("snapshot_id"))
             rs = theme.REVIEW_STATE[state["tone"]]
             chg = _change_indicator(r)
 
@@ -874,12 +962,14 @@ def _fire_list(frame: pd.DataFrame, selected: str | None, sort_choice: str,
                 f"<span class='cm-fr-name'>{r['fire_name']}</span>"
                 f"<span class='cm-fr-st'>{ctx['fmt']['text'](r.get('state'))}</span>"
                 + f"<span class='cm-fr-rs' style='color:{rs['accent']}'>"
-                  f"{rs['glyph']} {rs['label']}</span>"
+                  f"{rs['glyph']} {state['label']}</span>"
                   "</div>"
                   "<div class='cm-fr-l2'>"
                 f"<span class='cm-fr-ac'>{f'{size:,.0f} ac' if size is not None else 'size n/v'}</span>"
                 f"<span class='cm-fr-ct' style='color:{containment_colour(cont)}'>"
                 f"{f'{cont:.0f}% contained' if cont is not None else 'containment n/v'}</span>"
+                + ("<span class='cm-fr-chg up'>ZIP INTERSECT</span>"
+                   if ((att.get("proximity") or {}).get("intersects_zcta")) else "")
                 + (f"<span class='cm-fr-chg {chg[1]}'>{chg[0]}</span>" if chg else "")
                 + "</div>"
                   "<div class='cm-fr-l3'>"
@@ -950,7 +1040,7 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
         return
 
     att = _att(row)
-    state = review_state(row, store)
+    state = review_state(row, store, ctx.get("snapshot_id"))
     rs = theme.REVIEW_STATE[state["tone"]]
     size, cont = current_size(row), containment(row)
     iid = row["irwin_id"]
@@ -963,6 +1053,46 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
         f"style='background:{rs['accent']}22;color:{rs['accent']};"
         f"border:1px solid {rs['accent']}66'>{rs['glyph']} {state['label']}</span></div>",
         unsafe_allow_html=True)
+
+    # REVIEW FIRST — the normal path should take only a few seconds.
+    st.markdown("<div class='cm-sec-i'>Review</div>", unsafe_allow_html=True)
+    current_disp = reviews.disposition(store, iid)
+    options = list(reviews.DISPOSITIONS)
+    default_idx = options.index(current_disp) if current_disp in options else 0
+
+    chosen = st.radio("Status", options, index=default_idx, horizontal=True,
+                      key=f"cm_disp_v13_{iid}")
+
+    quick_reason = st.selectbox(
+        "Quick reason",
+        QUICK_REASONS,
+        index=0,
+        key=f"cm_reason_v13_{iid}",
+        help="Optional. Leave blank for a one-click review."
+    )
+    quick_reason_value = None if quick_reason == QUICK_REASON_OPTIONAL else quick_reason
+
+    rationale = st.text_area("Notes / rationale", value="", height=72,
+                             placeholder="Optional note…",
+                             key=f"cm_note_v13_{iid}")
+
+    st.markdown(
+        "<div class='cm-review-help'><b>Mark Reviewed</b> requires nothing else. "
+        "It records the status and current fire facts as the baseline for the next update. "
+        "If marked for further investigation, the fire stays in To Review.</div>",
+        unsafe_allow_html=True)
+    if st.button("Mark Reviewed", type="primary", use_container_width=True,
+                 key=f"cm_mark_v13_{iid}"):
+        st.session_state["cm_advance_after_review"] = iid
+        ctx["save_review"](row, chosen, rationale, quick_reason_value, False, False)
+
+    with st.expander("Log Review — formal record", expanded=False):
+        st.caption("Use this when you want a fuller evidence record you can revisit or explain later.")
+        freeze_map = st.checkbox("Include map snapshot", value=True,
+                                 key=f"cm_freeze_v13_{iid}")
+        if st.button("Log Review", use_container_width=True, key=f"cm_log_v13_{iid}"):
+            st.session_state["cm_advance_after_review"] = iid
+            ctx["save_review"](row, chosen, rationale, quick_reason_value, True, freeze_map)
 
     # CURRENT
     st.markdown("<div class='cm-sec-i'>Current</div>", unsafe_allow_html=True)
@@ -1051,6 +1181,9 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
             f"<div class='cm-sub'><b>{reviews.disposition(store, iid)}</b> · "
             f"{_pretty(str(latest.get('timestamp') or ''))}{logged}</div>",
             unsafe_allow_html=True)
+        if latest.get("quick_reason"):
+            st.markdown(f"<div class='cm-sub'>Reason: {latest['quick_reason']}</div>",
+                        unsafe_allow_html=True)
         if (latest.get("rationale") or "").strip():
             st.markdown(f"<div class='cm-rat'>{latest['rationale']}</div>",
                         unsafe_allow_html=True)
@@ -1058,39 +1191,6 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
         st.markdown("<div class='cm-sub'>Not previously reviewed.</div>",
                     unsafe_allow_html=True)
 
-    # TODAY'S REVIEW — inline, with ordinary review vs intentional evidence log explicit.
-    st.markdown("<div class='cm-sec-i'>Review</div>", unsafe_allow_html=True)
-    current_disp = reviews.disposition(store, iid)
-    options = list(reviews.DISPOSITIONS)
-    default_idx = options.index(current_disp) if current_disp in options else 0
-
-    with st.form(key=f"cm_inline_review_{iid}", clear_on_submit=False):
-        chosen = st.radio("Status", options, index=default_idx, horizontal=True,
-                          key=f"cm_disp_{iid}")
-        rationale = st.text_area("Notes / rationale", value="", height=86,
-                                 placeholder="Optional note…",
-                                 key=f"cm_note_{iid}")
-
-        st.markdown(
-            "<div class='cm-review-help'><b>Mark Reviewed</b> records the status, note, "
-            "time and current fire facts. This becomes the baseline for the next data update.</div>",
-            unsafe_allow_html=True)
-        mark_reviewed = st.form_submit_button("Mark Reviewed", type="primary",
-                                              use_container_width=True)
-
-        st.markdown(
-            "<div class='cm-review-split'><div class='cm-review-help'>"
-            "<b>Log Review</b> creates the fuller evidence record for a decision you may "
-            "want to revisit or explain later.</div></div>",
-            unsafe_allow_html=True)
-        freeze_map = st.checkbox("Include map snapshot", value=True,
-                                 key=f"cm_freeze_{iid}")
-        log_review = st.form_submit_button("Log Review", use_container_width=True)
-
-    if mark_reviewed:
-        ctx["save_review"](row, chosen, rationale, False, False)
-    if log_review:
-        ctx["save_review"](row, chosen, rationale, True, freeze_map)
 
     _history(row, store, ctx)
 
@@ -1189,15 +1289,15 @@ def _iso_or_none(v: Any) -> str | None:
 # Centre column - the map
 # --------------------------------------------------------------------------- #
 def _map_toolbar() -> str:
-    """Optional perimeter-distance overlay. Off by default."""
-    c1, c2 = st.columns([0.68, 0.32], gap="small", vertical_alignment="center")
+    """One underwriting-oriented distance overlay: 1, 3 and 5 miles together."""
+    c1, c2 = st.columns([0.58, 0.42], gap="small", vertical_alignment="center")
     with c1:
         st.markdown("<div class='cm-sub'>Fire perimeter and relevant ZIP areas</div>",
                     unsafe_allow_html=True)
     with c2:
-        rings = st.selectbox("Distance overlay", dashboard_map.RING_CHOICES,
-                             key="cm_rings", label_visibility="collapsed")
-    return rings or dashboard_map.RING_OFF
+        show_rings = st.checkbox("Show 1 / 3 / 5 mile rings", value=False,
+                                 key="cm_show_review_rings")
+    return dashboard_map.RING_REVIEW if show_rings else dashboard_map.RING_OFF
 
 
 def _map(row: pd.Series | None, meta: dict, ctx: dict) -> None:
@@ -1303,16 +1403,33 @@ def render(df: pd.DataFrame, meta: dict, ctx: dict, secondary: Callable[[], None
     pair_label = ctx.get("compare_label")
     note = ctx.get("perimeter_note")
 
-    pool = dashboard_fires(df, store)
-    sort_choice, big, near = _controls()
+    pool = dashboard_fires(df, store, meta.get("snapshot_id"))
+    sort_choice = _controls()
 
     # The left side is always the fire list. Change information is shown on each
     # fire row and expanded in the selected-fire panel, rather than through
     # separate change-category buttons.
     view = sort_fires(
-        apply_filters(pool, big, near),
+        pool,
         sort_choice,
+        store=store,
+        snapshot_id=meta.get("snapshot_id"),
     )
+
+    # After a review is saved, advance immediately to the next fire still needing
+    # work. The reviewed card remains in the queue but moves into Tracking or
+    # Reviewed — No Action.
+    advance_from = st.session_state.pop("cm_advance_after_review", None)
+    if advance_from and not view.empty:
+        work_ids = [
+            r["irwin_id"] for _, r in view.iterrows()
+            if _queue_group(r, store, meta.get("snapshot_id")) == 0
+            and r["irwin_id"] != advance_from
+        ]
+        if work_ids:
+            st.session_state["selected_irwin"] = work_ids[0]
+        else:
+            st.session_state["selected_irwin"] = view.iloc[0]["irwin_id"]
 
 
     # Three columns: list | map | selected fire. The map is the visual centre.

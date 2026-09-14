@@ -761,7 +761,7 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
     perimeter_note = _perimeter_note(meta, prior_meta)
 
     def save_review(row: pd.Series, disposition: str, rationale: str,
-                    logged: bool, save_map: bool) -> None:
+                    quick_reason: str | None, logged: bool, save_map: bool) -> None:
         """Persist a quick review or an intentional logged review.
 
         Disposition is not treated as changed until persistence succeeds, and a
@@ -784,8 +784,8 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
         try:
             reviews.add_review(
                 store, iid, row["fire_name"], disposition=disposition,
-                reviewer=_editor(), rationale=rationale, snapshot_id=sid,
-                evidence=dashboard.evidence_for(row, meta), map_image=map_name,
+                reviewer=_editor(), rationale=rationale, quick_reason=quick_reason,
+                snapshot_id=sid, evidence=dashboard.evidence_for(row, meta), map_image=map_name,
                 review_id=review_id, logged=logged)
             reviews.save(store)
         except (OSError, ValueError) as e:
