@@ -907,8 +907,8 @@ def _dashboard_secondary(df: pd.DataFrame, dropped: pd.DataFrame, meta: dict,
         c2.metric("Monitor", sum(1 for d in dispositions if d == reviews.MONITOR))
         c3.metric("No Action", sum(1 for d in dispositions if d == reviews.NO_ACTION))
         if not any(dispositions):
-            st.caption("No in-app reviews saved yet, so every fire shows Review Required. "
-                       "Day 1 begins with the first saved Ignore or Monitor review.")
+            st.caption("No in-app reviews saved yet. Day 1 begins with the first fire marked "
+                       "No Action, Monitor, or Moratorium.")
 
         pending = geo_candidates(df)
         calc_n = int((df["geo_status"] == "calculated").sum())

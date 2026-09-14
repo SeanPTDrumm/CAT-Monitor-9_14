@@ -222,7 +222,10 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
                 # as a solid background box with no visible text in pydeck's TextLayer.
                 # The city name is still available on hover via _zcta_detail().
                 labels.append({"position": list(pt), "text": z,
-                               "detail": f"{m['distance_miles']} mi · {m['review_state']}"})
+                               "distance_miles": m.get("distance_miles"),
+                               "intersects": bool(m.get("intersects")),
+                               "detail": (f"{float(m['distance_miles']):.1f} mi"
+                                          if m.get("distance_miles") is not None else "Distance not verified")})
                 context.append(pt)
 
     places: list[dict[str, Any]] = []
@@ -256,6 +259,13 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
     if not bbox or len(bbox) != 4:
         minx, miny, maxx, maxy = perim_shape.bounds
         bbox = [minx, miny, maxx, maxy]
+
+    # Map labels are deliberately selective: perimeter-intersecting ZIPs first,
+    # then the nearest remaining ZIPs. The right panel carries the fuller list.
+    labels.sort(key=lambda x: (not x.get("intersects"),
+                               x.get("distance_miles") is None,
+                               x.get("distance_miles") if x.get("distance_miles") is not None else 999))
+    labels = labels[:8]
 
     return {"ok": True, "perimeter": perim_geom, "zctas": zfeats, "labels": labels,
             "places": places, "view": fit_view(list(bbox), context),
@@ -351,7 +361,7 @@ def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> 
         layers.append(pdk.Layer(
             "TextLayer", id="cm-place-labels",
             data=[{**p, "text": p["label"], "position": [p["lon"], p["lat"]]}
-                               for p in prepared["places"]],
+                  for p in prepared["places"] if p.get("nearest")],
             get_position="position", get_text="text", get_size=13, get_color=LABEL_TEXT_DARK,
             get_pixel_offset=[0, -14], get_text_anchor=pdk.types.String("middle"),
             get_alignment_baseline=pdk.types.String("bottom"), font_family="Arial, Helvetica, sans-serif",

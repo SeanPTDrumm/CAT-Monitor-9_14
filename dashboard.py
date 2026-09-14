@@ -67,7 +67,7 @@ TONE = {k: v["accent"] for k, v in theme.REVIEW_STATE.items()}
 
 # Fire-row geometry. One number, used by both the row markup and the CSS that
 # pulls the transparent click target over it - they must not disagree.
-ROW_H = 68
+ROW_H = 78
 
 _CSS_TEMPLATE = Template("""
 <style>
@@ -268,11 +268,11 @@ _CSS_TEMPLATE = Template("""
            overflow: hidden; }
   .cm-fr.sel { background: $RED_WASH; border-bottom-color: $BORDER; }
   .cm-fr-bar { width: 3px; flex: 0 0 3px; }
-  .cm-fr-body { flex: 1; min-width: 0; padding: 7px 10px 6px 9px;
-                display: flex; flex-direction: column; justify-content: center; gap: 3px; }
-  .cm-fr-l1, .cm-fr-l2 { display: flex; align-items: center; gap: 8px;
+  .cm-fr-body { flex: 1; min-width: 0; padding: 8px 11px 7px 10px;
+                display: flex; flex-direction: column; justify-content: center; gap: 4px; }
+  .cm-fr-l1, .cm-fr-l2, .cm-fr-l3 { display: flex; align-items: center; gap: 8px;
                           white-space: nowrap; min-width: 0; }
-  .cm-fr-name { font-size: .84rem; font-weight: 700; color: $TEXT;
+  .cm-fr-name { font-size: .92rem; font-weight: 700; color: $TEXT;
                 letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis;
                 max-width: 46%; }
   .cm-fr.sel .cm-fr-name { color: #fff; }
@@ -288,7 +288,9 @@ _CSS_TEMPLATE = Template("""
               margin-left: auto; flex: 0 0 auto; }
   .cm-fr-rec { font-size: .58rem; color: $TEXT_FAINT; letter-spacing: .04em;
                flex: 0 0 auto; }
-  .cm-fr-l2 { font-size: .68rem; color: $TEXT_MUTED;
+  .cm-fr-l2 { font-size: .74rem; color: $TEXT_DIM;
+              font-variant-numeric: tabular-nums; }
+  .cm-fr-l3 { font-size: .68rem; color: $TEXT_MUTED;
               font-variant-numeric: tabular-nums; }
   .cm-fr-ac { font-weight: 700; color: $TEXT_DIM; flex: 0 0 auto; }
   .cm-fr-ct { font-weight: 700; flex: 0 0 auto; }
@@ -297,8 +299,13 @@ _CSS_TEMPLATE = Template("""
   .cm-fr-pop { color: $TEXT_FAINT; flex: 0 0 auto; }
 
   /* ---------------------------------------------------- selected-fire panel */
-  .cm-name { font-size: 1.02rem; font-weight: 700; color: $TEXT;
-             letter-spacing: .04em; margin: 0; }
+  .cm-name { font-size: 1.18rem; font-weight: 700; color: $TEXT;
+             letter-spacing: .035em; margin: 0; }
+  .cm-review-help { font-size: .68rem; line-height: 1.35; color: $TEXT_MUTED;
+                    margin: 4px 0 8px 0; }
+  .cm-review-split { border-top: 1px solid $BORDER_SOFT; margin: 10px 0 8px 0; padding-top: 8px; }
+  .cm-zipline { font-size: .72rem; color: $TEXT_DIM; line-height: 1.45; margin: 2px 0; }
+  .cm-zipline b { color: $TEXT; }
   .cm-state { display: inline-block; border-radius: 2px; padding: 2px 7px;
               font-size: .63rem; font-weight: 700; letter-spacing: .1em; }
   .cm-f { display: flex; justify-content: space-between; align-items: baseline;
@@ -1007,21 +1014,30 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
     zrows.sort(key=lambda z: (z.get("distance_miles") is None,
                               z.get("distance_miles") if z.get("distance_miles") is not None else 999))
     if zrows:
-        st.markdown("<div class='cm-f-l' style='margin-top:5px'>Relevant ZIP areas</div>",
+        intersects = [z for z in zrows if z.get("intersects")]
+        nearby = [z for z in zrows if not z.get("intersects")]
+
+        st.markdown("<div class='cm-f-l' style='margin-top:6px'>Relevant ZIP areas</div>",
                     unsafe_allow_html=True)
-        for z in zrows[:8]:
-            city = f" · {z.get('zip_city')}" if z.get("zip_city") else ""
-            if z.get("intersects"):
-                rel = "intersects perimeter"
-            elif z.get("distance_miles") is not None:
-                rel = f"{float(z['distance_miles']):.1f} mi"
-            else:
-                rel = "distance not verified"
-            st.markdown(
-                f"<div class='cm-chg'><b>{z.get('zcta')}</b>{city} · {rel}</div>",
-                unsafe_allow_html=True)
-        if len(zrows) > 8:
-            st.caption(f"+ {len(zrows) - 8} more ZIP areas in review range")
+
+        if intersects:
+            codes = ", ".join(str(z.get("zcta")) for z in intersects[:6])
+            more = f" +{len(intersects)-6} more" if len(intersects) > 6 else ""
+            st.markdown(f"<div class='cm-zipline'><b>Perimeter intersects:</b> {codes}{more}</div>",
+                        unsafe_allow_html=True)
+
+        if nearby:
+            parts = []
+            for z in nearby[:5]:
+                code = str(z.get("zcta"))
+                city = f" {z.get('zip_city')}" if z.get("zip_city") else ""
+                mi = z.get("distance_miles")
+                parts.append(f"{code}{city} ({float(mi):.1f} mi)" if mi is not None
+                             else f"{code}{city}")
+            more = f" +{len(nearby)-5} more" if len(nearby) > 5 else ""
+            st.markdown(f"<div class='cm-zipline'><b>Nearby:</b> "
+                        + " · ".join(parts) + more + "</div>",
+                        unsafe_allow_html=True)
     else:
         st.markdown("<div class='cm-sub'>No ZIP areas currently in the review range.</div>",
                     unsafe_allow_html=True)
@@ -1042,27 +1058,38 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
         st.markdown("<div class='cm-sub'>Not previously reviewed.</div>",
                     unsafe_allow_html=True)
 
-    # TODAY'S REVIEW — always inline, no second screen
+    # TODAY'S REVIEW — inline, with ordinary review vs intentional evidence log explicit.
     st.markdown("<div class='cm-sec-i'>Review</div>", unsafe_allow_html=True)
     current_disp = reviews.disposition(store, iid)
     options = list(reviews.DISPOSITIONS)
     default_idx = options.index(current_disp) if current_disp in options else 0
+
     with st.form(key=f"cm_inline_review_{iid}", clear_on_submit=False):
         chosen = st.radio("Status", options, index=default_idx, horizontal=True,
                           key=f"cm_disp_{iid}")
-        rationale = st.text_area("Notes / rationale", value="", height=90,
-                                 placeholder="Optional quick note…",
+        rationale = st.text_area("Notes / rationale", value="", height=86,
+                                 placeholder="Optional note…",
                                  key=f"cm_note_{iid}")
-        freeze_map = st.checkbox("Freeze current map with Log Review", value=True,
-                                 key=f"cm_freeze_{iid}")
-        c1, c2 = st.columns(2)
-        quick = c1.form_submit_button("Save Review", use_container_width=True)
-        logged = c2.form_submit_button("Log Review", type="primary",
-                                       use_container_width=True)
 
-    if quick:
+        st.markdown(
+            "<div class='cm-review-help'><b>Mark Reviewed</b> records the status, note, "
+            "time and current fire facts. This becomes the baseline for the next data update.</div>",
+            unsafe_allow_html=True)
+        mark_reviewed = st.form_submit_button("Mark Reviewed", type="primary",
+                                              use_container_width=True)
+
+        st.markdown(
+            "<div class='cm-review-split'><div class='cm-review-help'>"
+            "<b>Log Review</b> creates the fuller evidence record for a decision you may "
+            "want to revisit or explain later.</div></div>",
+            unsafe_allow_html=True)
+        freeze_map = st.checkbox("Include map snapshot", value=True,
+                                 key=f"cm_freeze_{iid}")
+        log_review = st.form_submit_button("Log Review", use_container_width=True)
+
+    if mark_reviewed:
         ctx["save_review"](row, chosen, rationale, False, False)
-    if logged:
+    if log_review:
         ctx["save_review"](row, chosen, rationale, True, freeze_map)
 
     _history(row, store, ctx)
