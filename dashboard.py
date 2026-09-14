@@ -679,47 +679,30 @@ def _since_last_update(frame: pd.DataFrame,
 
 
 def _snapshot_summary(frame: pd.DataFrame, dropped: pd.DataFrame | None,
-                      pair_label: str | None, note: str | None = None) -> None:
-    """The clickable change summary above the fire list.
+                       pair_label: str | None, note: str | None = None) -> None:
+    """Simple non-interactive snapshot heading.
 
-    Each category filters the list; clicking the active one again, or Show All,
-    clears the filter. Selection lives in session state so it survives reruns.
+    Change details belong on each fire row and in the selected-fire panel.
+    There are intentionally no acreage/containment/perimeter/dropped filter buttons.
     """
-    cats = _since_last_update(frame, dropped)
-    active = st.session_state.get("cm_change_filter")
+    # Clear any stale category filter left from an older app version/session.
+    st.session_state["cm_change_filter"] = None
 
     st.markdown(
-        "<div class='cm-si-head'><span class='cm-si-title'>Since last update</span>"
+        "<div class='cm-si-head'><span class='cm-si-title'>Changes since prior update</span>"
         + (f"<span class='cm-si-pair'>{pair_label}</span>" if pair_label else "")
         + "</div>", unsafe_allow_html=True)
 
     if note:
         st.markdown(f"<div class='cm-note'>{note}</div>", unsafe_allow_html=True)
 
-    if not cats:
-        st.markdown("<div class='cm-si-none'>No comparable prior snapshot, so no "
-                    "changes can be stated.</div>", unsafe_allow_html=True)
-        return
-
-    shown = [(k, lbl) for k, lbl in CHANGE_CATEGORIES if k in cats]
-    per_row = 3
-    for start in range(0, len(shown), per_row):
-        chunk = shown[start:start + per_row]
-        cols = st.columns(per_row, gap="small")
-        for col, (key, label) in zip(cols, chunk):
-            with col:
-                if st.button(f"{label} {len(cats[key])}", key=f"cm_chg_{key}",
-                             use_container_width=True,
-                             type="primary" if active == key else "secondary"):
-                    st.session_state["cm_change_filter"] = None if active == key else key
-                    st.rerun()
-        for col in cols[len(chunk):]:
-            col.empty()
-
-    if active:
-        if st.button("Show all", key="cm_chg_clear", use_container_width=True):
-            st.session_state["cm_change_filter"] = None
-            st.rerun()
+    # If there is no prior snapshot, say so plainly. Otherwise the fire rows and
+    # selected-fire panel carry the actual change information.
+    if not pair_label:
+        st.markdown(
+            "<div class='cm-si-none'>No comparable prior snapshot is selected.</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def filter_by_change(pool: pd.DataFrame, dropped: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -1414,16 +1397,13 @@ def render(df: pd.DataFrame, meta: dict, ctx: dict, secondary: Callable[[], None
     pool = dashboard_fires(df, store)
     sort_choice, big, near, pop_bands, area_buckets = _controls()
 
-    # A change category replaces the size/distance narrowing rather than stacking
-    # on top of it, so clicking a chip always shows the fires it counted.
-    changed = filter_by_change(pool, dropped)
-    if changed is not None:
-        view = sort_fires(changed, sort_choice)
-        narrowed_by = "change"
-    else:
-        view = sort_fires(apply_filters(pool, big, near, pop_bands, area_buckets),
-                          sort_choice)
-        narrowed_by = "filters"
+    # The left side is always the fire list. Change information is shown on each
+    # fire row and expanded in the selected-fire panel, rather than through
+    # separate change-category buttons.
+    view = sort_fires(
+        apply_filters(pool, big, near, pop_bands, area_buckets),
+        sort_choice,
+    )
 
     pending = st.session_state.get("cm_form")
     if pending:
@@ -1438,15 +1418,10 @@ def render(df: pd.DataFrame, meta: dict, ctx: dict, secondary: Callable[[], None
 
     with col_l:
         _snapshot_summary(pool, dropped, pair_label, note)
-        tail = (" &middot; change category, filters not applied"
-                if narrowed_by == "change" else "")
         st.markdown(f"<div class='cm-count'>Showing <b>{len(view)}</b> of "
-                    f"<b>{len(pool)}</b> fires{tail}</div>", unsafe_allow_html=True)
-        showing_dropped = st.session_state.get("cm_change_filter") == "dropped"
+                    f"<b>{len(pool)}</b> fires</div>", unsafe_allow_html=True)
         picked = None
-        if showing_dropped:
-            _dropped_list(dropped, ctx)
-        elif view.empty:
+        if view.empty:
             st.markdown("<div class='cm-si-none'>No fires match the current view. "
                         "Use Show all to widen it.</div>", unsafe_allow_html=True)
         else:
