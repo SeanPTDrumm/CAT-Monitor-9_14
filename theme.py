@@ -58,9 +58,10 @@ FONT = "Arial, Helvetica, sans-serif"   # Arial is what the bulletins use
 # --------------------------------------------------------------------------- #
 # Keys match dashboard.review_state()["tone"].
 REVIEW_STATE: dict[str, dict[str, str]] = {
-    "required":   {"accent": RED,        "glyph": "◆", "label": "INITIAL"},   # ◆
-    "monitoring": {"accent": TEXT,       "glyph": "◉", "label": "MONITOR"},   # ◉
-    "ignored":    {"accent": TEXT_FAINT, "glyph": "○", "label": "IGNORE"},    # ○
+    "required":   {"accent": RED,        "glyph": "◆", "label": "INITIAL"},
+    "monitoring": {"accent": TEXT,       "glyph": "◉", "label": "MONITOR"},
+    "no_action":  {"accent": TEXT_FAINT, "glyph": "○", "label": "NO ACTION"},
+    "moratorium": {"accent": RED,        "glyph": "■", "label": "MORATORIUM"},
 }
 
 

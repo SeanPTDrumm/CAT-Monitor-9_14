@@ -647,89 +647,58 @@ def _iso(v) -> str | None:
 
 
 def _dashboard_data_controls(metas: list[dict]) -> None:
-    """Simple daily WFIGS update workflow.
-
-    The normal analyst path is:
-      1. upload the new CSV
-      2. upload its matching GeoJSON
-      3. Save & Compare
-
-    The new snapshot becomes current and the immediately preceding stored snapshot
-    is selected automatically for comparison. Maintenance tools stay under
-    Advanced / Admin.
-    """
+    """Daily WFIGS update: two files in, then update and compare."""
     current_id, prior_id = resolve_snapshots(metas) if metas else (None, None)
     meta_by_id = {m["snapshot_id"]: m for m in metas}
 
-    if current_id:
-        cur_meta = meta_by_id.get(current_id)
-        prior_meta = meta_by_id.get(prior_id) if prior_id else None
-        st.markdown("**Current data:** " + when(cur_meta))
-        st.caption(
-            "Comparing with: " + (when(prior_meta) if prior_meta else "no prior snapshot selected")
-        )
-    else:
-        st.info("No snapshot is loaded yet. Upload the latest WFIGS files below.")
+    cur_meta = meta_by_id.get(current_id) if current_id else None
+    prior_meta = meta_by_id.get(prior_id) if prior_id else None
 
-    st.markdown("#### Daily update")
-    csv_up = st.file_uploader(
-        "WFIGS perimeter CSV",
-        type=["csv"],
-        key="daily_csv_up",
-    )
-    geo_up = st.file_uploader(
-        "Matching WFIGS GeoJSON",
-        type=["geojson", "json"],
-        key="daily_geo_up",
-        help="Recommended: upload the GeoJSON downloaded with the CSV so perimeter changes can be compared exactly.",
-    )
+    if cur_meta:
+        c1, c2 = st.columns(2)
+        c1.metric("Current", when(cur_meta))
+        c2.metric("Compared with", when(prior_meta) if prior_meta else "None")
+    else:
+        st.info("No current snapshot. Load the newest WFIGS CSV and matching GeoJSON.")
+
+    st.caption("Daily update — use the CSV and GeoJSON from the same WFIGS download.")
+    c1, c2 = st.columns(2)
+    with c1:
+        csv_up = st.file_uploader("WFIGS CSV", type=["csv"], key="daily_csv_up")
+    with c2:
+        geo_up = st.file_uploader("Matching GeoJSON", type=["geojson", "json"],
+                                  key="daily_geo_up")
 
     ready = csv_up is not None and geo_up is not None
-    if st.button(
-        "Save & Compare",
-        type="primary",
-        disabled=not ready,
-        use_container_width=True,
-        key="daily_save_compare",
-    ):
-        with st.spinner("Saving the new snapshot and preparing comparison…"):
+    if ready:
+        st.caption(f"Ready: {csv_up.name} + {geo_up.name}")
+    else:
+        st.caption("Choose both files to continue.")
+
+    if st.button("Update & Compare", type="primary", disabled=not ready,
+                 use_container_width=True, key="daily_save_compare"):
+        with st.spinner("Loading WFIGS data and preparing the comparison…"):
             try:
                 sid = snapshots.save_snapshot(
-                    csv_up.getvalue(),
-                    csv_up.name,
+                    csv_up.getvalue(), csv_up.name,
                     geojson_bytes=geo_up.getvalue(),
                     geojson_filename=geo_up.name,
                     fetch_perimeters_if_missing=False,
                 )
                 st.cache_data.clear()
-
-                # Make the upload current. On rerun resolve_snapshots() will
-                # automatically choose the immediately preceding stored snapshot.
                 st.session_state["current_id"] = sid
                 st.session_state.pop(f"prior_pick_{sid}", None)
-
-                st.success("Snapshot saved. Comparing with the immediately previous snapshot.")
+                st.toast("New snapshot loaded and comparison prepared.")
                 st.rerun()
             except ValueError as e:
                 st.error(str(e))
 
-    if not ready:
-        st.caption("Upload both the CSV and matching GeoJSON to enable Save & Compare.")
-
     with st.expander("Advanced / Admin", expanded=False):
-        st.text_input(
-            "Your name (recorded on reviews)",
-            key="editor_name",
-            placeholder="e.g. Justin",
-        )
-
-        # Keep the less-common import tools available without cluttering the daily workflow.
+        st.text_input("Reviewer name", key="editor_name", placeholder="e.g. Justin")
         data_controls(st, include_upload=False)
-
         refreshed = snapshots.list_snapshots()
         if refreshed:
             st.divider()
-            st.markdown("**Snapshot controls**")
             snapshot_controls(st, refreshed)
             housekeeping_controls(st, refreshed)
 
@@ -792,8 +761,8 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
     perimeter_note = _perimeter_note(meta, prior_meta)
 
     def save_review(row: pd.Series, disposition: str, rationale: str,
-                    save_map: bool) -> None:
-        """Persist one Ignore or Monitor review, then rerender from what was stored.
+                    logged: bool, save_map: bool) -> None:
+        """Persist a quick review or an intentional logged review.
 
         Disposition is not treated as changed until persistence succeeds, and a
         per-submission review id makes a Streamlit rerun unable to append twice.
@@ -809,7 +778,7 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
             st.rerun()
 
         map_name, map_failed = None, False
-        if save_map:
+        if logged and save_map:
             map_name, map_failed = _save_review_map(review_id, row)
 
         try:
@@ -817,16 +786,15 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
                 store, iid, row["fire_name"], disposition=disposition,
                 reviewer=_editor(), rationale=rationale, snapshot_id=sid,
                 evidence=dashboard.evidence_for(row, meta), map_image=map_name,
-                review_id=review_id)
+                review_id=review_id, logged=logged)
             reviews.save(store)
         except (OSError, ValueError) as e:
             st.error(f"The review could not be saved: {e}. Nothing was changed.")
             return
 
-        st.session_state.pop("cm_form", None)
         st.session_state.pop("cm_review_id", None)
-        st.session_state.pop("cm_moratorium", None)
-        st.toast("Review saved. The map image could not be saved."
+        label = "Logged review" if logged else "Review"
+        st.toast(f"{label} saved; map freeze failed."
                  if map_failed else f"{row['fire_name']}: {disposition} saved.")
         st.rerun()
 
@@ -855,6 +823,7 @@ def _dashboard_context(df: pd.DataFrame, meta: dict, metas: list[dict],
         "state": lambda r: fmt_text(r.get("state")),
         "record": lambda iid: analyst.get(recs, iid),
         "review_store": store,
+        "snapshot_id": sid,
         "spatial_all": lambda s: _spatial_all(s, _spatial_version(s)),
         "load_inputs": lambda s, iid: _load_inputs_cached(s, iid, _spatial_version(s)),
         "run_geography": lambda fires: run_geography(sid, fires),
@@ -936,7 +905,7 @@ def _dashboard_secondary(df: pd.DataFrame, dropped: pd.DataFrame, meta: dict,
         c1, c2, c3 = st.columns(3)
         c1.metric("Fires in file", meta.get("row_count", 0))
         c2.metric("Monitor", sum(1 for d in dispositions if d == reviews.MONITOR))
-        c3.metric("Ignore", sum(1 for d in dispositions if d == reviews.IGNORE))
+        c3.metric("No Action", sum(1 for d in dispositions if d == reviews.NO_ACTION))
         if not any(dispositions):
             st.caption("No in-app reviews saved yet, so every fire shows Review Required. "
                        "Day 1 begins with the first saved Ignore or Monitor review.")

@@ -28,11 +28,14 @@ DATA_DIR = BASE_DIR / "data"
 REVIEW_FILE = DATA_DIR / "reviews.json"
 MAP_DIR = DATA_DIR / "review_maps"
 
-# Only these dispositions are saved. "Create Moratorium" opens the builder entry
-# point and never records a disposition (handoff 10.3).
-IGNORE = "Ignore"
+# Reviewer dispositions. "Ignore" is retained only as a legacy alias so older
+# review records continue to render correctly.
+NO_ACTION = "No Action"
 MONITOR = "Monitor"
-DISPOSITIONS = (IGNORE, MONITOR)
+MORATORIUM = "Moratorium"
+LEGACY_IGNORE = "Ignore"
+IGNORE = NO_ACTION
+DISPOSITIONS = (NO_ACTION, MONITOR, MORATORIUM)
 
 # Evidence captured at review time (handoff section 12). Missing stays missing.
 EVIDENCE_KEYS = (
@@ -85,24 +88,30 @@ def latest(store: dict[str, list[dict[str, Any]]], irwin_id: str) -> dict[str, A
 
 
 def disposition(store: dict[str, list[dict[str, Any]]], irwin_id: str) -> str | None:
+    """Latest reviewer disposition, normalising the old Ignore label."""
     r = latest(store, irwin_id)
-    return r.get("disposition") if r else None
+    if not r:
+        return None
+    d = r.get("disposition")
+    return NO_ACTION if d == LEGACY_IGNORE else d
 
 
 def add_review(store: dict[str, list[dict[str, Any]]], irwin_id: str, fire_name: str | None, *,
                disposition: str, reviewer: str | None, rationale: str = "",
                snapshot_id: str | None = None, evidence: dict[str, Any] | None = None,
                map_image: str | None = None, review_id: str | None = None,
-               area_bucket: str | None = None) -> dict[str, Any]:
+               logged: bool = False) -> dict[str, Any]:
     """Append one review entry. Returns the stored entry.
 
     `rationale` is preserved exactly, including line breaks, and is optional.
     `evidence` records only what the reviewer could actually see; absent facts stay
     absent and are never backfilled later.
-    `area_bucket` is the reviewer-confirmed or reviewer-changed Area Bucket, if any -
-    a separate quick-look dimension from `disposition`, not a screening fact, so it
-    is not filtered through EVIDENCE_KEYS.
+    `logged` marks the intentional evidence record used when the reviewer wants a
+    fuller audit trail. Ordinary quick reviews still save the baseline facts needed
+    for tomorrow's comparison, but do not imply that a formal evidence log was made.
     """
+    if disposition == LEGACY_IGNORE:
+        disposition = NO_ACTION
     if disposition not in DISPOSITIONS:
         raise ValueError(f"disposition must be one of {DISPOSITIONS}, got {disposition!r}")
     iid = _norm(irwin_id)
@@ -118,7 +127,7 @@ def add_review(store: dict[str, list[dict[str, Any]]], irwin_id: str, fire_name:
         "snapshot_id": snapshot_id,
         "evidence": ev,
         "map_image": map_image,
-        "area_bucket": area_bucket,
+        "logged": bool(logged),
     }
     store.setdefault(iid, []).append(entry)
     return entry

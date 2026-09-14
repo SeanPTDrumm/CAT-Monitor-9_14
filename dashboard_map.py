@@ -28,7 +28,6 @@ import pydeck as pdk
 from shapely.geometry import Point, shape
 from shapely.ops import nearest_points
 
-import bands
 import maps
 import theme
 
@@ -61,12 +60,6 @@ LABEL_OUTLINE = theme.MAP_LABEL_OUTLINE
 # this it logs "fontSettings.sdf is required to render outline" and drops the halo,
 # which is what made ZIP labels unreadable against the basemap.
 LABEL_FONT_SETTINGS = {"sdf": True}
-
-# Map modes (§20). Presentation only - no mode changes a measurement or a decision.
-MODE_STANDARD = "Standard"
-MODE_ZIP = "ZIP Review"
-MODE_DISTANCE = "Distance Review"
-MODES = [MODE_STANDARD, MODE_ZIP, MODE_DISTANCE]
 
 # Stable layer id: Streamlit keys chart selections by layer id, and pydeck
 # otherwise mints a fresh UUID on every rerun.
@@ -303,48 +296,32 @@ def _ring_features(perim_geom: dict[str, Any], rings: str) -> list[dict[str, Any
 
 
 def _zcta_detail(m: dict[str, Any], in_moratorium: bool) -> str:
-    """Hover detail for a ZIP area - known values only, in reviewer language.
-
-    Reads fields already cached in `m` (this fire's spatial result): no new
-    calculation and no network call, so hover, pan and zoom stay silent. Unknown
-    fields are omitted rather than shown empty, and nothing here carries a
-    citation or a technical aside - the source note lives in the attribution.
-    """
-    bits = []
+    """Hover detail for a ZIP/ZCTA: raw known facts only, no exposure buckets."""
+    bits: list[str] = []
     city = m.get("zip_city")
     bits.append(f"ZIP {m['zcta']}" + (f" ({city})" if city else ""))
 
-    bucket, _factors = bands.zcta_area_bucket(m)
-    if bucket and bucket != "Needs review":
-        bits.append(bucket)                       # Exposure Context, unlabelled
+    if m.get("intersects"):
+        bits.append("Perimeter intersects ZIP area")
+    else:
+        mi = m.get("distance_miles")
+        if mi is not None:
+            bits.append(f"{float(mi):.1f} mi from perimeter")
 
     pop = m.get("population_2020")
-    pop_band = bands.population_band(pop)
-    if pop_band and pop_band != "Not available":
-        bits.append(f"Population: {pop_band}")
-
-    rel = bands.zcta_distance_label(m)
-    if rel and rel != "Not verified":
-        bits.append(rel)
+    if pop is not None:
+        bits.append(f"Population {int(pop):,} (Census 2020)")
 
     if in_moratorium:
         bits.append("Under existing moratorium")
     return " · ".join(bits)
 
 
-def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001,
-         mode: str = MODE_STANDARD) -> pdk.Deck:
-    """Build the dashboard deck. Order matters: perimeter is drawn last, on top.
-
-    `mode` changes emphasis only (§20): which layers are pickable and how heavy
-    the ZIP outlines read. It never alters geometry, a measurement, or a saved
-    decision, and Distance Review still shows only the rings the user enabled.
-    """
+def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> pdk.Deck:
+    """Build the dashboard deck. Perimeter is dominant; ZIPs stay readable/clickable."""
     from geo import spatial as geo_spatial
 
     layers: list[pdk.Layer] = []
-    zip_focus = mode == MODE_ZIP
-
     # Rings first, underneath everything: they are context, not the subject.
     if prepared.get("rings"):
         layers.append(pdk.Layer(
@@ -362,7 +339,7 @@ def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001,
             stroked=True, filled=True, get_fill_color="properties.fill",
             get_line_color="properties.line", get_line_width="properties.width",
             line_width_units=pdk.types.String("pixels"),
-            line_width_min_pixels=2 if zip_focus else 1,
+            line_width_min_pixels=1,
             pickable=True, auto_highlight=True))
 
     if prepared["places"]:

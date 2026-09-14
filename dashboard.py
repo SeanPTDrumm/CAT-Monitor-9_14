@@ -10,7 +10,7 @@ Scope rules honoured here:
   * The operational baseline is only reviews saved in-app. Archived Excel-derived
     records are never read or shown.
   * WFIGS Distance and Perimeter Distance are never combined in one field.
-  * Only three review decisions exist: Ignore, Monitor, Create Moratorium.
+  * Reviewer dispositions are No Action, Monitor, Moratorium.
   * Nothing is inferred - no population, evacuation, structures, barriers, scores.
   * Styling stays scoped to this page.
 """
@@ -67,7 +67,7 @@ TONE = {k: v["accent"] for k, v in theme.REVIEW_STATE.items()}
 
 # Fire-row geometry. One number, used by both the row markup and the CSS that
 # pulls the transparent click target over it - they must not disagree.
-ROW_H = 56
+ROW_H = 68
 
 _CSS_TEMPLATE = Template("""
 <style>
@@ -514,9 +514,9 @@ def dashboard_fires(df: pd.DataFrame, store: dict) -> pd.DataFrame:
         att = _att(r)
         if att.get("alaska"):
             keep.append(False)              # hidden, but the source record stays
-        elif reviews.disposition(store, r["irwin_id"]) == reviews.MONITOR:
-            keep.append(True)               # stays visible after every upload
-        elif reviews.disposition(store, r["irwin_id"]) == reviews.IGNORE:
+        elif reviews.disposition(store, r["irwin_id"]) in (reviews.MONITOR, reviews.MORATORIUM):
+            keep.append(True)               # tracked states stay visible after every upload
+        elif reviews.disposition(store, r["irwin_id"]) == reviews.NO_ACTION:
             keep.append(bool(att.get("requires_attention")))   # only if resurfaced
         else:
             keep.append(att.get("bucket") in (attention.BUCKET_ATTENTION,
@@ -528,18 +528,7 @@ def dashboard_fires(df: pd.DataFrame, store: dict) -> pd.DataFrame:
 # Review state (handoff 9)
 # --------------------------------------------------------------------------- #
 def review_state(row: Any, store: dict) -> dict[str, Any]:
-    """One of INITIAL / MONITORING / IGNORED, with tone and accent color for UI.
-
-    Returns: {
-      "label": "INITIAL" | "MONITORING" | "IGNORED",
-      "tone": "required" | "monitoring" | "ignored",
-      "accent": accent color hex code,
-      "review": latest review record or None,
-      "when": formatted timestamp string or None,
-      "detail": human-readable change summary or None,
-      "changes": [{"label": ..., "was": ..., "now": ...}, ...]
-    }
-    """
+    """Human review state plus change context."""
     latest = reviews.latest(store, row["irwin_id"])
     att = _att(row)
     when = None
@@ -549,28 +538,29 @@ def review_state(row: Any, store: dict) -> dict[str, Any]:
 
     if latest is None:
         return {"label": "INITIAL", "tone": "required", "accent": TONE["required"],
-                "detail": "No Day 1 review has been saved for this fire.",
-                "review": None, "changes": [], "when": None}
+                "detail": "Not previously reviewed.", "review": None,
+                "changes": [], "when": None}
 
     current = {"acres": current_size(row), "containment": containment(row)}
     changes = reviews.changes_since(latest, current)
-    disp = latest.get("disposition")
+    disp = reviews.disposition(store, row["irwin_id"])
 
     if disp == reviews.MONITOR:
-        if att.get("requires_attention") and changes:
-            return {"label": "MONITORING", "tone": "monitoring", "accent": TONE["monitoring"],
-                    "detail": "Material changes detected since the last review.",
-                    "when": when, "review": latest, "changes": changes}
-        return {"label": "MONITORING", "tone": "monitoring", "accent": TONE["monitoring"],
-                "when": when, "detail": None if changes else "No changes since the last review.",
-                "review": latest, "changes": changes}
+        tone, label = "monitoring", "MONITOR"
+    elif disp == reviews.MORATORIUM:
+        tone, label = "moratorium", "MORATORIUM"
+    else:
+        tone, label = "no_action", "NO ACTION"
 
-    if att.get("requires_attention"):
-        return {"label": "INITIAL", "tone": "required", "accent": TONE["required"],
-                "detail": "Material changes detected since the last review.",
-                "when": when, "review": latest, "changes": changes}
-    return {"label": "IGNORED", "tone": "ignored", "accent": TONE["ignored"],
-            "when": when, "detail": None, "review": latest, "changes": changes}
+    if att.get("requires_attention") and changes:
+        detail = "Changed since the last review."
+    elif changes:
+        detail = "Updated since the last review."
+    else:
+        detail = "No acreage or containment change since the last review."
+
+    return {"label": label, "tone": tone, "accent": TONE[tone],
+            "when": when, "detail": detail, "review": latest, "changes": changes}
 
 
 def _pretty(iso: str) -> str:
@@ -770,14 +760,10 @@ def _clear_filters() -> None:
 
 
 def _controls() -> tuple[str, bool, bool]:
-    """Reviewer-facing controls: sort plus size/distance filters only.
-
-    Population and exposure buckets are intentionally removed until the source data
-    and classification rules are validated.
-    """
+    """Small optional narrowing controls. No hidden reset action."""
     with st.container(key="cm_tools"):
-        c1, c2, c3, c4 = st.columns([0.40, 0.20, 0.20, 0.20],
-                                    gap="small", vertical_alignment="center")
+        c1, c2, c3 = st.columns([0.50, 0.25, 0.25],
+                                gap="small", vertical_alignment="center")
         with c1:
             st.markdown("<div class='cm-tool-l'>Sort</div>", unsafe_allow_html=True)
             choice = st.selectbox("Sort", SORT_CHOICES, key="cm_sort",
@@ -786,11 +772,6 @@ def _controls() -> tuple[str, bool, bool]:
             big = st.checkbox("500+ acres", value=True, key="cm_f_big")
         with c3:
             near = st.checkbox("Within 5 miles", value=True, key="cm_f_near")
-        with c4:
-            st.markdown("<div class='cm-tool-l'>&nbsp;</div>", unsafe_allow_html=True)
-            if st.button("Show all", key="cm_clear_filters", use_container_width=True):
-                _clear_filters()
-                st.rerun()
     return choice, big, near
 
 
@@ -885,17 +866,20 @@ def _fire_list(frame: pd.DataFrame, selected: str | None, sort_choice: str,
                 "<div class='cm-fr-l1'>"
                 f"<span class='cm-fr-name'>{r['fire_name']}</span>"
                 f"<span class='cm-fr-st'>{ctx['fmt']['text'](r.get('state'))}</span>"
-                + (f"<span class='cm-fr-chg {chg[1]}'>{chg[0]}</span>" if chg else "")
                 + f"<span class='cm-fr-rs' style='color:{rs['accent']}'>"
                   f"{rs['glyph']} {rs['label']}</span>"
-                  f"<span class='cm-fr-rec'>{review_recency(r, store)}</span>"
                   "</div>"
                   "<div class='cm-fr-l2'>"
                 f"<span class='cm-fr-ac'>{f'{size:,.0f} ac' if size is not None else 'size n/v'}</span>"
                 f"<span class='cm-fr-ct' style='color:{containment_colour(cont)}'>"
-                f"{f'{cont:.0f}%' if cont is not None else 'n/v'}</span>"
-                f"<span class='cm-fr-loc'>{loc}</span>"
+                f"{f'{cont:.0f}% contained' if cont is not None else 'containment n/v'}</span>"
+                + (f"<span class='cm-fr-chg {chg[1]}'>{chg[0]}</span>" if chg else "")
+                + "</div>"
+                  "<div class='cm-fr-l3'>"
+                f"<span class='cm-fr-loc'>{(nearest_place(att) or loc)}"
+                f"{f' · {perimeter_distance(att):.1f} mi' if perimeter_distance(att) is not None else ''}</span>"
                 f"<span class='cm-fr-pop'>{_row_population(r, att)}</span>"
+                f"<span class='cm-fr-rec'>{review_recency(r, store)}</span>"
                 "</div></div></div>", unsafe_allow_html=True)
     return picked
 
@@ -952,12 +936,7 @@ def _fact(label: str, value: str | None, note: str | None = None) -> None:
 
 
 def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
-    """Selected fire: Overview | Change since last update | Exposure | Review.
-
-    Facts are stated once. The change section is driven by the snapshot
-    comparison, so it is populated whether or not the fire has ever been
-    reviewed, and it is omitted entirely when there is no comparable prior.
-    """
+    """Selected fire: current -> change -> exposure -> prior review -> today's review."""
     if row is None:
         st.markdown("<div class='cm-si-none'>Select a fire to see its details.</div>",
                     unsafe_allow_html=True)
@@ -972,104 +951,119 @@ def _panel(row: pd.Series | None, store: dict, ctx: dict) -> None:
 
     st.markdown(
         f"<div class='cm-name'>{row['fire_name']}"
-        f"<span class='cm-fr-st' style='margin-left:8px'>"
-        f"{ctx['fmt']['text'](row.get('state'))}</span></div>"
+        f"<span class='cm-fr-st' style='margin-left:8px'>{ctx['fmt']['text'](row.get('state'))}</span></div>"
         f"<div style='margin:5px 0 2px 0'><span class='cm-state' "
         f"style='background:{rs['accent']}22;color:{rs['accent']};"
         f"border:1px solid {rs['accent']}66'>{rs['glyph']} {state['label']}</span></div>",
         unsafe_allow_html=True)
-    if state.get("when"):
-        st.markdown(f"<div class='cm-f-n' style='text-align:left'>{state['when']}</div>",
-                    unsafe_allow_html=True)
 
-    # ---- OVERVIEW
-    st.markdown("<div class='cm-sec-i'>Overview</div>", unsafe_allow_html=True)
-    _fact("Acreage", f"{size:,.0f}" if size is not None else None,
-          "Meets the 500-acre review standard"
-          if size is not None and size >= SIZE_BREAKPOINT
-          else "Under the 500-acre review standard" if size is not None else None)
+    # CURRENT
+    st.markdown("<div class='cm-sec-i'>Current</div>", unsafe_allow_html=True)
+    _fact("Acreage", f"{size:,.0f}" if size is not None else None)
     _fact("Containment",
           f"<span style='color:{containment_colour(cont)}'>{cont:.0f}%</span>"
           if cont is not None else None)
     _fact("WFIGS location", wfigs_location(row))
-    _fact("Source", ctx["fmt"]["text"](row.get("source_system")))
 
-    # ---- CHANGE SINCE LAST UPDATE (snapshot facts; no review required)
+    # CHANGE
+    st.markdown("<div class='cm-sec-i'>Since prior update</div>", unsafe_allow_html=True)
     lines: list[str] = []
     if d["is_new"]:
-        lines.append("<b>New</b> in this snapshot")
+        lines.append("<b>New in this snapshot</b>")
     else:
         if d["acres_delta"] is not None and d["acres_delta"] != 0:
-            pct = (f" ({d['acres_delta_pct']:+.0f}%)"
-                   if d["acres_delta_pct"] is not None else "")
-            lines.append(f"Acreage <b>{d['acres_delta']:+,.0f}</b>{pct}")
+            lines.append(f"Acreage <b>{d['acres_delta']:+,.0f}</b>")
         if (d["containment_delta"] is not None and d["containment_delta"] != 0
                 and d["containment_prior"] is not None and d["containment"] is not None):
-            lines.append(f"Containment {d['containment_prior']:.0f}% &rarr; "
+            lines.append(f"Containment {d['containment_prior']:.0f}% → "
                          f"{d['containment']:.0f}% (<b>{d['containment_delta']:+.0f} pts</b>)")
         if d["perimeter_changed"] is True:
             lines.append("Perimeter changed")
-        elif d["perimeter_changed"] is None:
-            lines.append("<span class='cm-nv'>Perimeter change not verified</span>")
         if d["closer_miles"] is not None:
             lines.append(f"Nearest place <b>{d['closer_miles']:.1f} mi closer</b>")
         if d["zips_entered"]:
             lines.append("ZIPs newly in range: " + ", ".join(d["zips_entered"][:4]))
-        if d["name_changed"]:
-            lines.append(f"Name changed from {d['name_prior']}")
-
-    if d["has_prior"] or d["is_new"]:
-        st.markdown("<div class='cm-sec-i'>Change since last update</div>",
+    if lines:
+        for line in lines:
+            st.markdown(f"<div class='cm-chg'>{line}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='cm-sub'>No reported change in the comparable fields.</div>",
                     unsafe_allow_html=True)
-        if lines:
-            for ln in lines:
-                st.markdown(f"<div class='cm-chg'>{ln}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div class='cm-f-n' style='text-align:left'>"
-                        "No change in the compared fields.</div>", unsafe_allow_html=True)
 
-    # ---- EXPOSURE
+    # EXPOSURE
     st.markdown("<div class='cm-sec-i'>Exposure</div>", unsafe_allow_html=True)
     prox = att.get("proximity") or {}
-    place, pop = nearest_place(att), prox.get("population")
+    place, pop = prox.get("place"), prox.get("population")
     _fact("Nearest population center", place)
     _fact("Population", f"{pop:,}" if pop is not None else None,
           "2020 U.S. Census" if pop is not None else None)
     pd_mi = perimeter_distance(att)
-    _fact("Distance from perimeter", f"{pd_mi:.1f} mi" if pd_mi is not None else None,
-          _distance_note(pd_mi))
-    zs = nearby_zctas(att)
-    _fact("Nearby ZIPs", f"{len(zs)}" if zs else None,
-          "within 5 mi of the perimeter" if zs else None)
-    if zs:
-        with st.expander("ZIP detail", expanded=False):
-            st.markdown("".join(f"<span class='cm-badge'>{z}</span>" for z in zs),
-                        unsafe_allow_html=True)
-            st.markdown("<div class='cm-f-n' style='text-align:left'>Census ZIP Code "
-                        "Tabulation Areas within 5 mi of the perimeter, nearest first. "
-                        "ZCTAs are not USPS delivery ZIPs - confirm before use.</div>",
-                        unsafe_allow_html=True)
+    _fact("Distance from perimeter", f"{pd_mi:.1f} mi" if pd_mi is not None else None)
 
-    # ---- REVIEW
-    st.markdown("<div class='cm-sec-i'>Review</div>", unsafe_allow_html=True)
-    latest = state["review"]
-    if latest and (latest.get("rationale") or "").strip():
-        st.markdown(f"<div class='cm-rat'>{latest['rationale']}</div>",
+    sid = ctx.get("snapshot_id")
+    sp = (ctx["spatial_all"](sid).get(iid) if sid else None) or {}
+    zrows = [z for z in ((sp.get("spatial") or {}).get("zctas") or [])
+             if z.get("review_state") in ("VERIFY", "REVIEW")]
+    zrows.sort(key=lambda z: (z.get("distance_miles") is None,
+                              z.get("distance_miles") if z.get("distance_miles") is not None else 999))
+    if zrows:
+        st.markdown("<div class='cm-f-l' style='margin-top:5px'>Relevant ZIP areas</div>",
+                    unsafe_allow_html=True)
+        for z in zrows[:8]:
+            city = f" · {z.get('zip_city')}" if z.get("zip_city") else ""
+            if z.get("intersects"):
+                rel = "intersects perimeter"
+            elif z.get("distance_miles") is not None:
+                rel = f"{float(z['distance_miles']):.1f} mi"
+            else:
+                rel = "distance not verified"
+            st.markdown(
+                f"<div class='cm-chg'><b>{z.get('zcta')}</b>{city} · {rel}</div>",
+                unsafe_allow_html=True)
+        if len(zrows) > 8:
+            st.caption(f"+ {len(zrows) - 8} more ZIP areas in review range")
+    else:
+        st.markdown("<div class='cm-sub'>No ZIP areas currently in the review range.</div>",
                     unsafe_allow_html=True)
 
-    b1, b2 = st.columns(2)
-    if b1.button("Ignore", key=f"cm_ign_{iid}", use_container_width=True):
-        st.session_state["cm_form"] = {"irwin_id": iid, "disposition": reviews.IGNORE}
-        st.rerun()
-    if b2.button("Monitor", key=f"cm_mon_{iid}", use_container_width=True):
-        st.session_state["cm_form"] = {"irwin_id": iid, "disposition": reviews.MONITOR}
-        st.rerun()
-    b3, b4 = st.columns(2)
-    if b3.button("Moratorium", key=f"cm_mora_{iid}", use_container_width=True):
-        st.session_state["cm_moratorium"] = iid
-        st.rerun()
-    if b4.button("Open details", key=f"cm_det_{iid}", use_container_width=True):
-        ctx["goto_detail"](iid)
+    # PRIOR REVIEW
+    st.markdown("<div class='cm-sec-i'>Prior review</div>", unsafe_allow_html=True)
+    latest = state["review"]
+    if latest:
+        logged = " · Logged review" if latest.get("logged") else ""
+        st.markdown(
+            f"<div class='cm-sub'><b>{reviews.disposition(store, iid)}</b> · "
+            f"{_pretty(str(latest.get('timestamp') or ''))}{logged}</div>",
+            unsafe_allow_html=True)
+        if (latest.get("rationale") or "").strip():
+            st.markdown(f"<div class='cm-rat'>{latest['rationale']}</div>",
+                        unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='cm-sub'>Not previously reviewed.</div>",
+                    unsafe_allow_html=True)
+
+    # TODAY'S REVIEW — always inline, no second screen
+    st.markdown("<div class='cm-sec-i'>Review</div>", unsafe_allow_html=True)
+    current_disp = reviews.disposition(store, iid)
+    options = list(reviews.DISPOSITIONS)
+    default_idx = options.index(current_disp) if current_disp in options else 0
+    with st.form(key=f"cm_inline_review_{iid}", clear_on_submit=False):
+        chosen = st.radio("Status", options, index=default_idx, horizontal=True,
+                          key=f"cm_disp_{iid}")
+        rationale = st.text_area("Notes / rationale", value="", height=90,
+                                 placeholder="Optional quick note…",
+                                 key=f"cm_note_{iid}")
+        freeze_map = st.checkbox("Freeze current map with Log Review", value=True,
+                                 key=f"cm_freeze_{iid}")
+        c1, c2 = st.columns(2)
+        quick = c1.form_submit_button("Save Review", use_container_width=True)
+        logged = c2.form_submit_button("Log Review", type="primary",
+                                       use_container_width=True)
+
+    if quick:
+        ctx["save_review"](row, chosen, rationale, False, False)
+    if logged:
+        ctx["save_review"](row, chosen, rationale, True, freeze_map)
 
     _history(row, store, ctx)
 
@@ -1103,8 +1097,10 @@ def _history(row: pd.Series, store: dict, ctx: dict) -> None:
         return
     with st.expander(f"Review history ({len(entries)})", expanded=False):
         for e in entries:
+            kind = " • Logged review" if e.get("logged") else ""
+            disp = reviews.NO_ACTION if e.get("disposition") == reviews.LEGACY_IGNORE else e.get("disposition")
             st.markdown(f"**{_pretty(str(e.get('timestamp') or ''))}**  \n"
-                        f"{e.get('reviewer') or 'unknown'} • {e.get('disposition')}")
+                        f"{e.get('reviewer') or 'unknown'} • {disp}{kind}")
             if (e.get("rationale") or "").strip():
                 st.markdown(f"<div class='cm-rat'>{e['rationale']}</div>",
                             unsafe_allow_html=True)
@@ -1131,49 +1127,6 @@ def _show_saved_map(entry: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 # Review Fire form (handoff 11)
 # --------------------------------------------------------------------------- #
-def _review_form(row: pd.Series, disposition: str, store: dict, ctx: dict) -> None:
-    att = _att(row)
-    size, cont = current_size(row), containment(row)
-    pd_mi, place = perimeter_distance(att), nearest_place(att)
-    zs = nearby_zctas(att)
-
-    st.markdown(f"<div class='cm-sec'>Review fire: {row['fire_name']}</div>",
-                unsafe_allow_html=True)
-    with st.form(key=f"cm_form_{row['irwin_id']}"):
-        idx = 0 if disposition == reviews.IGNORE else 1
-        chosen = st.radio("Disposition", list(reviews.DISPOSITIONS), index=idx,
-                          key="cm_form_disp")
-        rationale = st.text_area("Review Rationale", value="", height=200,
-                                 key="cm_form_rationale")
-        save_map = st.checkbox("Save current map image with this review",
-                               value=False, key="cm_form_map")
-
-        st.markdown("<div class='cm-sec'>System snapshot at review</div>",
-                    unsafe_allow_html=True)
-        lines = [f"{size:,.0f} acres" if size is not None else "size unavailable",
-                 f"{cont:.0f}% contained" if cont is not None else "containment unavailable"]
-        st.markdown(f"<div class='cm-sub'>{' | '.join(lines)}</div>", unsafe_allow_html=True)
-        for label, value in (("WFIGS location", wfigs_location(row)),
-                             ("Nearest population center", place),
-                             ("Distance from fire perimeter",
-                              f"{pd_mi:.1f} miles" if pd_mi is not None else None),
-                             ("Nearby ZIP areas", ", ".join(zs) if zs else None)):
-            if value:
-                st.markdown(f"<div class='cm-sub'>{label}: {value}</div>",
-                            unsafe_allow_html=True)
-
-        c1, c2 = st.columns(2)
-        cancelled = c1.form_submit_button("Cancel", use_container_width=True)
-        submitted = c2.form_submit_button("Save Review", type="primary",
-                                          use_container_width=True)
-
-    if cancelled:
-        st.session_state.pop("cm_form", None)
-        st.rerun()
-    if submitted:
-        ctx["save_review"](row, chosen, rationale, save_map)
-
-
 def evidence_for(row: pd.Series, meta: dict) -> dict[str, Any]:
     """Facts available to the reviewer at review time (handoff 12).
 
@@ -1208,21 +1161,16 @@ def _iso_or_none(v: Any) -> str | None:
 # --------------------------------------------------------------------------- #
 # Centre column - the map
 # --------------------------------------------------------------------------- #
-def _map_toolbar() -> tuple[str, str]:
-    """Mode segmented control plus the distance-ring selector, on one compact bar.
-
-    Both are view state only. Rings default to Off so they do not occupy the map
-    during every normal review, and neither control records a decision.
-    """
-    c1, c2 = st.columns([0.62, 0.38], gap="small", vertical_alignment="center")
+def _map_toolbar() -> str:
+    """Optional perimeter-distance overlay. Off by default."""
+    c1, c2 = st.columns([0.68, 0.32], gap="small", vertical_alignment="center")
     with c1:
-        mode = st.segmented_control(
-            "Map mode", dashboard_map.MODES, default=dashboard_map.MODE_STANDARD,
-            key="cm_mapmode", label_visibility="collapsed")
+        st.markdown("<div class='cm-sub'>Fire perimeter and relevant ZIP areas</div>",
+                    unsafe_allow_html=True)
     with c2:
-        rings = st.selectbox("Distance rings", dashboard_map.RING_CHOICES,
+        rings = st.selectbox("Distance overlay", dashboard_map.RING_CHOICES,
                              key="cm_rings", label_visibility="collapsed")
-    return mode or dashboard_map.MODE_STANDARD, rings or dashboard_map.RING_OFF
+    return rings or dashboard_map.RING_OFF
 
 
 def _map(row: pd.Series | None, meta: dict, ctx: dict) -> None:
@@ -1231,7 +1179,7 @@ def _map(row: pd.Series | None, meta: dict, ctx: dict) -> None:
                     "geography.</div>", unsafe_allow_html=True)
         return
 
-    mode, rings = _map_toolbar()
+    rings = _map_toolbar()
     sid = meta["snapshot_id"]
     iid = row["irwin_id"]
 
@@ -1256,7 +1204,7 @@ def _map(row: pd.Series | None, meta: dict, ctx: dict) -> None:
     # "save map with this review" can never store another fire's map.
     st.session_state["cm_last_deck"] = {**prepared, "irwin_id": iid}
 
-    built = dashboard_map.deck(prepared, row["fire_name"], mode=mode)
+    built = dashboard_map.deck(prepared, row["fire_name"])
 
     # The deck paints an empty canvas on the FIRST render of a session: it mounts
     # before the column it lives in has been measured, and nothing afterwards
@@ -1284,14 +1232,11 @@ def _map(row: pd.Series | None, meta: dict, ctx: dict) -> None:
         st.session_state["cm_map_primed"] = True
         st.rerun()
 
-    # Clicking a ZIP highlights it and nothing else: it never saves a decision
-    # and never adds a ZIP to a moratorium. Honoured in ZIP Review only, so a
-    # stray click cannot change what Standard or Distance Review is showing.
-    if mode == dashboard_map.MODE_ZIP:
-        picked = _picked_zip(event)
-        if picked is not None and picked != selected_zip:
-            st.session_state.setdefault("cm_sel_zip", {})[iid] = picked
-            st.rerun()
+    # Clicking a ZIP only highlights it; it never records a review decision.
+    picked = _picked_zip(event)
+    if picked is not None and picked != selected_zip:
+        st.session_state.setdefault("cm_sel_zip", {})[iid] = picked
+        st.rerun()
 
     bar = [dashboard_map.caption(prepared)]
     if prepared.get("selected_zip"):
@@ -1342,13 +1287,6 @@ def render(df: pd.DataFrame, meta: dict, ctx: dict, secondary: Callable[[], None
         sort_choice,
     )
 
-    pending = st.session_state.get("cm_form")
-    if pending:
-        match = df[df["irwin_id"] == pending["irwin_id"]]
-        if not match.empty:
-            _review_form(match.iloc[0], pending["disposition"], store, ctx)
-            return
-        st.session_state.pop("cm_form", None)
 
     # Three columns: list | map | selected fire. The map is the visual centre.
     col_l, col_c, col_r = st.columns([0.35, 0.40, 0.25], gap="medium")
@@ -1359,8 +1297,7 @@ def render(df: pd.DataFrame, meta: dict, ctx: dict, secondary: Callable[[], None
                     f"<b>{len(pool)}</b> fires</div>", unsafe_allow_html=True)
         picked = None
         if view.empty:
-            st.markdown("<div class='cm-si-none'>No fires match the current view. "
-                        "Use Show all to widen it.</div>", unsafe_allow_html=True)
+            st.markdown("<div class='cm-si-none'>No fires match the current filters.</div>", unsafe_allow_html=True)
         else:
             picked = _fire_list(view, st.session_state.get("selected_irwin"),
                                 sort_choice, store, ctx)
