@@ -1,0 +1,10 @@
+PASS: Python syntax - 26 Python files compiled
+2026-09-15 15:45:38.869 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+PASS: Imports - 52 static imports and all non-entry app modules imported
+No broken requirements found.
+PASS: Requirements - 45 exact installed versions verified; pip check passed
+PASS: Persistent folders - 9 external-to-code folders writable; repeated initialization preserved markers
+PASS: Missing references and key - Absent ZIP table, baseline and Census key return empty/Not verified, without exception
+PASS: Census API failure - Simulated service failure gracefully returns unverified populations
+2026-09-15 15:45:42.150 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+PASS: Empty Streamlit app - AppTest rendered with zero exceptions and both clear missing-reference messages

@@ -1,0 +1,30 @@
+PASS: Python syntax - 26 Python files compiled
+2026-09-15 15:10:51.491 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+PASS: Imports - 52 static imports and all non-entry app modules imported
+No broken requirements found.
+PASS: Requirements - 45 exact installed versions verified; pip check passed
+PASS: Persistent folders - 9 external-to-code folders writable; repeated initialization preserved markers
+PASS: Missing references and key - Absent ZIP table, baseline and Census key return empty/Not verified, without exception
+PASS: Census API failure - Simulated service failure gracefully returns unverified populations
+2026-09-15 15:10:53.304 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+PASS: Empty Streamlit app - AppTest rendered with zero exceptions and both clear missing-reference messages
+2026-09-15 15:10:56.308 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-15 15:10:58.016 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, specify an integer width.
+2026-09-15 15:11:00.134 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, specify an integer width.
+2026-09-15 15:11:00.189 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-15 15:11:01.822 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, specify an integer width.
+PASS: Populated workflow - Real WFIGS import, dashboard, Mark Reviewed, new session reload, and duplicate rejection passed; fixture SHA256=092047c39786ccf29d25aa22411878fe76a5b3816b8104de905d96bd470d49bb
+PASS: TIGERweb failure - Blocked geography service produces a saved explicit unavailable result, without crashing
+PASS: Review map storage - Real perimeter serialized by existing map builder into persistent HTML; no Census features or populations synthesized

@@ -1,0 +1,11 @@
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\reference\census
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\reference\baseline
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\operational_snapshots
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\review_history
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\review_maps
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\logs
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\cache
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\imports
+Writable: C:\Users\seanp\Documents\Codex\2026-09-15\build-a-self-contained-windows-local\work\verification space\CAT-Monitor\data\config
+PASS: Code replacement plus new-process initialization preserved all 20 data-file hashes.
+PASS: Default paths resolve under relocated package, outside app and .venv.

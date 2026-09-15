@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "file_hashes_before_and_after": {
+    "cache\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "cache\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "config\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "config\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "imports\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "imports\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "logs\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "logs\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "logs\\streamlit-20260915-150659.log": "c86469f8bc9aec685a35b34e6143c6879b54cd460aa84475fb6a445a123be750",
+    "operational_snapshots\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "operational_snapshots\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "review_history\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "review_history\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "review_history\\reviews.json": "f8c954c56895a374400b84fd4350e85bb4212b8203afff2d661817b2aae344ae",
+    "review_maps\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "review_maps\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "reference\\baseline\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "reference\\baseline\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac",
+    "reference\\census\\audit-preserve.txt": "02a8faf23983e80494b0ef8efb59ecb7cca28ebc031e9b5c8e95033406e60404",
+    "reference\\census\\PLACEHOLDER.txt": "4d081be7d129e0341c8348f358458c1eafd91bc0e804a3f2dae87aa5606684ac"
+  }
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "check": "Python syntax",
+    "status": "PASS",
+    "detail": "26 Python files compiled"
+  },
+  {
+    "check": "Imports",
+    "status": "PASS",
+    "detail": "52 static imports and all non-entry app modules imported"
+  },
+  {
+    "check": "Requirements",
+    "status": "PASS",
+    "detail": "45 exact installed versions verified; pip check passed"
+  },
+  {
+    "check": "Persistent folders",
+    "status": "PASS",
+    "detail": "9 external-to-code folders writable; repeated initialization preserved markers"
+  },
+  {
+    "check": "Missing references and key",
+    "status": "PASS",
+    "detail": "Absent ZIP table, baseline and Census key return empty/Not verified, without exception"
+  },
+  {
+    "check": "Census API failure",
+    "status": "PASS",
+    "detail": "Simulated service failure gracefully returns unverified populations"
+  },
+  {
+    "check": "Empty Streamlit app",
+    "status": "PASS",
+    "detail": "AppTest rendered with zero exceptions and both clear missing-reference messages"
+  }
+]

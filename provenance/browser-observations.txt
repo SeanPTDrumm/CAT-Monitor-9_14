@@ -1,0 +1,7 @@
+Browser verification, 2026-09-15, http://localhost:8501/
+Title: Catastrophe Monitor
+Empty startup: heading and upload/import controls rendered; missing key/ZIP messages visible.
+Final populated build: CAT MONITOR, Wildfire monitoring, Data current 2026-09-14 13:21 UTC, Showing 176 of 176 fires; Camp Creek selected with Mark Reviewed controls.
+Final missing-reference messages confirmed under UPDATE DATA > Advanced / Admin.
+Screenshot inspected: original dashboard spans browser width without an added sidebar.
+No live Census geography was computed in this browser check; map explicitly reports geography not calculated.

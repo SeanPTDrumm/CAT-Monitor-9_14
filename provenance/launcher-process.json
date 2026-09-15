@@ -1,0 +1,4 @@
+{
+  "ExecutablePath": "C:\\Users\\seanp\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+  "CommandLine": "\"C:\\Users\\seanp\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe\" -m streamlit run \"C:\\Users\\seanp\\Documents\\Codex\\2026-09-15\\build-a-self-contained-windows-local\\work\\verification space\\CAT-Monitor\\app\\app.py\" --server.address=127.0.0.1 --server.port=8501 --server.headless=false --browser.serverAddress=localhost --browser.gatherUsageStats=false"
+}

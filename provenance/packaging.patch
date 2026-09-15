@@ -1,0 +1,194 @@
+--- source/analyst.py
++++ app/analyst.py
+@@ -14,7 +14,7 @@
+ from typing import Any
+ 
+ BASE_DIR = Path(__file__).resolve().parent
+-DATA_DIR = BASE_DIR / "data"
++from local_paths import REVIEW_DIR as DATA_DIR
+ STATUS_FILE = DATA_DIR / "analyst_status.json"
+ 
+ STATUS_OPTIONS = ["No Action", "Monitor", "Investigate", "Existing Moratorium"]
+--- source/app.py
++++ app/app.py
+@@ -33,7 +33,8 @@
+ from geo import analysis, census, spatial
+ 
+ NV = wfigs.NOT_VERIFIED
+-BASE_DIR = Path(__file__).resolve().parent
++from local_paths import IMPORT_DIR as BASE_DIR, ensure_directories, REFERENCE_DIR
++ensure_directories()
+ PAGES = ["Dashboard", "Fire Table", "Fire Detail"]
+ STATUS_ORDER = {"Existing Moratorium": 0, "Investigate": 1, "Monitor": 2, "No Action": 3}
+ STATUS_ICON = {"No Action": "⚪", "Monitor": "🟡", "Investigate": "🔴", "Existing Moratorium": "🟣"}
+@@ -219,6 +220,9 @@
+ def data_controls(c, include_upload: bool = True) -> None:
+     """Load / import widgets. Rendered into the sidebar on the legacy pages, and into
+     the dashboard's own "Data" popover so the dashboard carries no admin sidebar."""
++    if not (REFERENCE_DIR / "zip_master.csv").exists():
++        c.caption("Optional ZIP reference missing: data/reference/zip_master.csv. ZIP community names are unavailable; see DATA_GUIDE.md.")
++    c.caption(census.population_status())
+     if include_upload:
+         with c.expander("Upload files", expanded=False):
+             csv_up = st.file_uploader("WFIGS perimeter CSV", type=["csv"], key="csv_up")
+@@ -339,7 +343,7 @@
+         st.caption(screening.describe())
+         st.caption(census.population_status())
+     with c.expander("Snapshot housekeeping", expanded=False):
+-        st.caption(f"{len(metas)} snapshot(s) stored under data/snapshots/")
++        st.caption(f"{len(metas)} snapshot(s) stored under data/operational_snapshots/")
+         del_pick = st.selectbox("Delete a snapshot", ["(select)"] + ids, key="hk_del",
+                                 format_func=lambda i: i if i == "(select)" else labels[i])
+         confirm = st.checkbox("I understand this removes the stored copy of that download.",
+@@ -1369,7 +1373,7 @@
+         ["Urgency / screening", "Calculated in this app (fixed rules, see sidebar)", "", "urgency.py / screening.py", "deterministic"],
+         ["Baseline note", "Justin tracking workbook", "", rec.get("baseline_reference") or "Not imported", "verbatim"],
+         ["Analyst fields", f"Analyst outside research ({rec.get('updated_by') or 'unknown editor'})", "",
+-         "data/analyst_status.json", rec.get("updated_at") or NV],
++         "data/review_history/analyst_status.json", rec.get("updated_at") or NV],
+     ]
+     if sp and sp.get("status") == "calculated":
+         src = sp["sources"]
+@@ -1379,7 +1383,7 @@
+             ["ZCTA geometry", src["zcta_geometry"]["source_name"], src["zcta_geometry"]["source_url"], "", src["zcta_geometry"]["retrieved_at"]],
+             ["Place geometry", src["place_geometry"]["source_name"], src["place_geometry"]["source_url"], "", src["place_geometry"]["retrieved_at"]],
+             ["Population", src["population"]["source_name"], "https://api.census.gov/data/2020/dec/pl", "", src["population"]["status"]],
+-            ["ZIP community names", "Hiscox ZIP master (10-2024)", "", "data/geography/zip_master.csv", "internal reference"],
++            ["ZIP community names", "Hiscox ZIP master (10-2024)", "", "data/reference/zip_master.csv", "internal reference"],
+             ["Distance method", sp["spatial"]["method"], "", sp["spatial"]["crs_used"], sp["calculated_at"]],
+         ]
+     else:
+--- source/baseline.py
++++ app/baseline.py
+@@ -25,7 +25,7 @@
+ import analyst
+ 
+ BASE_DIR = Path(__file__).resolve().parent
+-REFERENCE_DIR = BASE_DIR / "reference"
++from local_paths import BASELINE_DIR as REFERENCE_DIR
+ DEFAULT_WORKBOOK = REFERENCE_DIR / "2026-09 Fire Tracking.xlsx"
+ DEFAULT_SHEET = "9-8"        # sheet carrying Justin's written conclusions
+ REVIEW_SHEET = "9-9"         # last completed review pass (no new notes = position unchanged)
+--- source/census.py
++++ app/census.py
+@@ -30,9 +30,8 @@
+ SOURCE_POPULATION = "U.S. Census Bureau 2020 Decennial Census, PL 94-171 (P1_001N)"
+ 
+ BASE_DIR = Path(__file__).resolve().parent.parent
+-DATA_DIR = BASE_DIR / "data"
+-GEO_DIR = DATA_DIR / "geography"
+-KEY_FILE = DATA_DIR / "census_api_key.txt"
++from local_paths import DATA_ROOT as DATA_DIR, CACHE_DIR as GEO_DIR, CONFIG_DIR
++KEY_FILE = CONFIG_DIR / "census_api_key.txt"
+ POP_CACHE = GEO_DIR / "population_cache.json"
+ 
+ MILES_PER_DEG_LAT = 69.0
+@@ -229,5 +228,5 @@
+ 
+ def population_status() -> str:
+     return ("Census API key present" if api_key() else
+-            "No Census API key (CENSUS_API_KEY or data/census_api_key.txt): populations show Not verified. "
++            "No Census API key (CENSUS_API_KEY or data/config/census_api_key.txt): populations show Not verified. "
+             "Free key: https://api.census.gov/data/key_signup.html")
+--- source/dashboard_map.py
++++ app/dashboard_map.py
+@@ -163,7 +163,7 @@
+                 or "Perimeter geography has not been calculated for this fire yet."}
+     if not inputs:
+         return {"ok": False, "reason": "Stored geometry for this fire is missing "
+-                                       "(data/snapshots/<id>/spatial/*.inputs.json)."}
++                                       "(data/operational_snapshots/<id>/spatial/*.inputs.json)."}
+     perim_geom = (inputs.get("perimeter") or {}).get("geometry")
+     if not perim_geom:
+         return {"ok": False, "reason": "No perimeter polygon is stored for this fire."}
+--- source/geo/analysis.py
++++ app/geo/analysis.py
+@@ -20,7 +20,7 @@
+ from geo import census, net, perimeters, spatial, zipmaster
+ 
+ BASE_DIR = Path(__file__).resolve().parent.parent
+-SNAP_DIR = BASE_DIR / "data" / "snapshots"
++from local_paths import SNAP_DIR
+ MAX_MILES = 10.0
+ 
+ 
+--- source/geo/census.py
++++ app/geo/census.py
+@@ -30,9 +30,8 @@
+ SOURCE_POPULATION = "U.S. Census Bureau 2020 Decennial Census, PL 94-171 (P1_001N)"
+ 
+ BASE_DIR = Path(__file__).resolve().parent.parent
+-DATA_DIR = BASE_DIR / "data"
+-GEO_DIR = DATA_DIR / "geography"
+-KEY_FILE = DATA_DIR / "census_api_key.txt"
++from local_paths import DATA_ROOT as DATA_DIR, CACHE_DIR as GEO_DIR, CONFIG_DIR
++KEY_FILE = CONFIG_DIR / "census_api_key.txt"
+ POP_CACHE = GEO_DIR / "population_cache.json"
+ 
+ MILES_PER_DEG_LAT = 69.0
+@@ -200,5 +199,5 @@
+ 
+ def population_status() -> str:
+     return ("Census API key present" if api_key() else
+-            "No Census API key (CENSUS_API_KEY or data/census_api_key.txt): populations show Not verified. "
++            "No Census API key (CENSUS_API_KEY or data/config/census_api_key.txt): populations show Not verified. "
+             "Free key: https://api.census.gov/data/key_signup.html")
+--- source/geo/zipmaster.py
++++ app/geo/zipmaster.py
+@@ -14,7 +14,8 @@
+ from pathlib import Path
+ 
+ BASE_DIR = Path(__file__).resolve().parent.parent
+-ZIP_MASTER = BASE_DIR / "data" / "geography" / "zip_master.csv"
++from local_paths import REFERENCE_DIR
++ZIP_MASTER = REFERENCE_DIR / "zip_master.csv"
+ SOURCE_NAME = "Hiscox ZIP master (Southern Coastal County Zips workbook, 10-2024)"
+ 
+ 
+--- source/local_paths.py
++++ app/local_paths.py
+@@ -0,0 +1,19 @@
++"""Persistent paths, independent of current directory and app updates."""
++import os
++from pathlib import Path
++PACKAGE_ROOT = Path(__file__).resolve().parent.parent
++DATA_ROOT = Path(os.environ.get("CAT_MONITOR_DATA_DIR", str(PACKAGE_ROOT / "data"))).expanduser().resolve()
++REFERENCE_DIR = DATA_ROOT / "reference"
++CENSUS_DIR = REFERENCE_DIR / "census"
++BASELINE_DIR = REFERENCE_DIR / "baseline"
++SNAP_DIR = DATA_ROOT / "operational_snapshots"
++REVIEW_DIR = DATA_ROOT / "review_history"
++MAP_DIR = DATA_ROOT / "review_maps"
++LOG_DIR = DATA_ROOT / "logs"
++CACHE_DIR = DATA_ROOT / "cache"
++IMPORT_DIR = DATA_ROOT / "imports"
++CONFIG_DIR = DATA_ROOT / "config"
++DIRECTORIES = (CENSUS_DIR, BASELINE_DIR, SNAP_DIR, REVIEW_DIR, MAP_DIR, LOG_DIR, CACHE_DIR, IMPORT_DIR, CONFIG_DIR)
++def ensure_directories():
++    for folder in DIRECTORIES:
++        folder.mkdir(parents=True, exist_ok=True)
+--- source/reviews.py
++++ app/reviews.py
+@@ -26,9 +26,8 @@
+ from typing import Any
+ 
+ BASE_DIR = Path(__file__).resolve().parent
+-DATA_DIR = BASE_DIR / "data"
++from local_paths import REVIEW_DIR as DATA_DIR, MAP_DIR
+ REVIEW_FILE = DATA_DIR / "reviews.json"
+-MAP_DIR = DATA_DIR / "review_maps"
+ 
+ # Reviewer dispositions. "Ignore" is retained only as a legacy alias so older
+ # review records continue to render correctly.
+--- source/snapshots.py
++++ app/snapshots.py
+@@ -20,8 +20,7 @@
+ import wfigs
+ 
+ BASE_DIR = Path(__file__).resolve().parent
+-DATA_DIR = BASE_DIR / "data"
+-SNAP_DIR = DATA_DIR / "snapshots"
++from local_paths import DATA_ROOT as DATA_DIR, SNAP_DIR
+ 
+ _ID_FMT = "%Y-%m-%d_%H%M%S"
+ 
