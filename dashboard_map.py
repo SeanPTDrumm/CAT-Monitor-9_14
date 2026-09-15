@@ -382,7 +382,15 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
     return {"ok": True, "perimeter": perim_geom, "zctas": zfeats, "labels": labels,
             "places": places, "view": fit_view(list(bbox), context),
             "rings": _ring_features(perim_geom, rings),
-            "selected_zip": selected_zip if selected_zip in measured else None,
+            "selected_zip": (
+                selected_zip
+                if selected_zip is not None
+                and any(
+                    (f.get("properties") or {}).get("zcta") == selected_zip
+                    for f in zfeats
+                )
+                else None
+            ),
             "relevant_zips": sorted(
                 z
                 for z, rec in measured.items()
@@ -506,9 +514,10 @@ def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> 
             pickable=False,
         ))
 
-        # 4) Transparent interaction surface. Hover gets a pale cream wash.
-        # Keeping this separate from the visible outline/fill layers avoids the
-        # opaque block behaviour that was making the map unreadable.
+        # 4) Transparent interaction surface across EVERY available ZCTA polygon.
+        # Hover gets a pale cream wash. This is the only ZIP layer that receives
+        # mouse events; visible fills/outlines and the fire perimeter are non-pickable,
+        # so they cannot block ZIP hover/click selection.
         layers.append(pdk.Layer(
             "GeoJsonLayer", id=ZIP_LAYER_ID,
             data={"type": "FeatureCollection", "features": zctas},
@@ -575,29 +584,17 @@ def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> 
         line_width_units=pdk.types.String("pixels"),
         get_line_width=PERIM_LINE_WIDTH,
         line_width_min_pixels=3,
-        pickable=True,
+        # Visual layer only. The transparent ZIP interaction layer underneath
+        # must receive hover/click events even when the fire overlaps a ZIP.
+        pickable=False,
         auto_highlight=False,
     ))
 
-    # Relevant ZIP codes are printed directly on the map so the underwriter
-    # can scan the 5-mile review geography without having to hover every area.
-    if prepared["labels"]:
-        layers.append(pdk.Layer(
-            "TextLayer", id="cm-zip-labels",
-            data=prepared["labels"],
-            get_position="position",
-            get_text="text",
-            get_size="label_size",
-            get_color="label_color",
-            get_text_anchor=pdk.types.String("middle"),
-            get_alignment_baseline=pdk.types.String("center"),
-            font_family="Arial, Helvetica, sans-serif",
-            font_weight=700,
-            outline_width=6,
-            get_outline_color=theme.MAP_ZIP_LABEL_HALO,
-            font_settings=LABEL_FONT_SETTINGS,
-            pickable=False,
-        ))
+    # ZIP text labels are intentionally omitted from the working map.
+    # The review panel remains the authoritative ZIP list, while every available
+    # ZIP polygon stays hoverable/selectable through the transparent interaction
+    # layer. This keeps the map readable and avoids cartographic clutter.
+
 
     tooltip = {
         "html": "<b>{label}</b><br/>{detail}",
