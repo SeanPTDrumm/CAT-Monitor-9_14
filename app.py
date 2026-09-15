@@ -9,8 +9,6 @@ Run:  streamlit run app.py
 
 UI Redesign: 2026-09-10 - Simplified dashboard with top 5 fires view
 """
-# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
-
 from __future__ import annotations
 
 import re
@@ -937,7 +935,17 @@ def _dashboard_secondary(df: pd.DataFrame, dropped: pd.DataFrame, meta: dict,
         sp_all = _spatial_all(meta["snapshot_id"], _spatial_version(meta["snapshot_id"]))
         for r in view.to_dict("records"):
             # In-app disposition only; archived statuses never colour the dashboard.
-            r["status"] = reviews.disposition(_review_store(), r["irwin_id"]) or "No Action"
+            # The older national-map colour logic still expects
+            # "Existing Moratorium" rather than the newer "Moratorium" label.
+            disposition = reviews.disposition(_review_store(), r["irwin_id"]) or "No Action"
+
+            if disposition == reviews.MORATORIUM:
+                r["status"] = "Existing Moratorium"
+            elif disposition in ("No Action", "Monitor"):
+                r["status"] = disposition
+            else:
+                r["status"] = "No Action"
+
             sp = sp_all.get(r["irwin_id"])
             if sp and sp.get("status") == "calculated":
                 inputs = analysis.load_inputs(meta["snapshot_id"], r["irwin_id"])
