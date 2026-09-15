@@ -10,9 +10,9 @@ as it does. This module renders the same source geometry with dashboard cartogra
     One deliberate exception: a ZCTA under an existing moratorium gets a subtle
     low-alpha fill and a heavier outline, because "already restricted" is a fact
     the analyst must see without hunting for it.
-  * labels only on ZIP areas actually in concern range, placed at each area's
-    nearest point to the fire (not its centroid - a rural ZCTA's centroid can sit
-    30 miles away and label the wrong ground)
+  * labels only on ZIPs intersecting the perimeter or within 5 miles, with
+    collision suppression and a hard cap so the map stays readable
+  * surrounding available ZIPs remain hoverable as a quiet exploration layer
   * proximity rings omitted; the calculated distance is stated in quick facts
   * camera fitted to the perimeter plus only nearby relevant geography, with a
     hard cap on how far it may zoom out
@@ -92,21 +92,98 @@ def _deg_per_mile(lat: float) -> tuple[float, float]:
     return lon_deg, lat_deg
 
 
-def label_point(perim_geom: Any, feature_geom: dict[str, Any]) -> tuple[float, float] | None:
-    """Point on `feature_geom` closest to the fire - a representative label anchor.
+def label_point(perim_geom: Any, feature_geom: dict[str, Any],
+                intersects: bool = False) -> tuple[float, float] | None:
+    """Return a readable label anchor inside the ZIP area near the fire.
 
-    Deterministic (shapely nearest_points), and always inside/on the ZIP area it
-    labels, so a 40-mile-wide rural ZCTA labels next to the fire rather than at a
-    centroid tens of miles away.
+    Intersecting ZIPs use a representative point inside the actual
+    fire/ZIP overlap, so the label is visibly associated with the overlap.
+    Nearby ZIPs start at the ZIP edge closest to the fire and are nudged
+    inward toward a guaranteed interior point. This avoids labels sitting
+    exactly on borders or disappearing far away in a huge rural ZCTA.
     """
     try:
         g = shape(feature_geom)
         if g.is_empty:
             return None
-        p = nearest_points(perim_geom, g)[1]
-        return float(p.x), float(p.y)
+
+        if intersects:
+            overlap = g.intersection(perim_geom)
+            if not overlap.is_empty:
+                p = overlap.representative_point()
+                return float(p.x), float(p.y)
+
+        near = nearest_points(perim_geom, g)[1]
+        inside = g.representative_point()
+
+        dx = float(inside.x - near.x)
+        dy = float(inside.y - near.y)
+        length = math.hypot(dx, dy)
+        if length <= 1e-9:
+            return float(inside.x), float(inside.y)
+
+        # Roughly <= 0.8 mile inward. Enough to get off the border without
+        # dragging the label deep into a very large rural ZIP.
+        step = min(length * 0.20, 0.012)
+        x = float(near.x + dx / length * step)
+        y = float(near.y + dy / length * step)
+
+        p = Point(x, y)
+        if g.covers(p):
+            return x, y
+
+        # Safety fallback: always inside the ZIP.
+        return float(inside.x), float(inside.y)
+
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _label_sep_miles(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Approximate separation between two lon/lat label anchors in miles."""
+    lat = (a[1] + b[1]) / 2.0
+    dx = (a[0] - b[0]) * MILES_PER_DEG_LAT * math.cos(math.radians(lat))
+    dy = (a[1] - b[1]) * MILES_PER_DEG_LAT
+    return math.hypot(dx, dy)
+
+
+def _declutter_labels(labels: list[dict[str, Any]], max_labels: int = 6) -> list[dict[str, Any]]:
+    """Keep the most decision-useful ZIP labels without turning the map into soup.
+
+    Priority:
+      1) perimeter-intersecting ZIPs
+      2) nearest ZIPs within 5 miles
+
+    Labels that would land almost on top of an already-kept label are suppressed.
+    The complete ZIP list still remains available in the right panel and via hover.
+    """
+    labels = sorted(
+        labels,
+        key=lambda x: (
+            not bool(x.get("intersects")),
+            x.get("distance_miles") is None,
+            float(x.get("distance_miles") or 0.0),
+            str(x.get("text") or ""),
+        ),
+    )
+
+    kept: list[dict[str, Any]] = []
+    for cand in labels:
+        pos = cand.get("position")
+        if not pos or len(pos) != 2:
+            continue
+
+        # Allow intersecting ZIP labels to sit a little closer together because
+        # they are the most important; otherwise keep roughly 0.9 mi separation.
+        min_sep = 0.55 if cand.get("intersects") else 0.90
+        if any(_label_sep_miles(tuple(pos), tuple(k["position"])) < min_sep for k in kept):
+            continue
+
+        kept.append(cand)
+        if len(kept) >= max_labels:
+            break
+
+    return kept
 
 
 def fit_view(perim_bbox: list[float], context_points: list[tuple[float, float]]) -> pdk.ViewState:
@@ -180,28 +257,25 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
     for f in (inputs.get("zctas") or {}).get("features", []):
         props = f.get("properties") or {}
         z = props.get("ZCTA5")
+        if not z:
+            continue
+
         m = measured.get(z)
-        if not m:
-            continue                      # beyond 10 mi: not this fire's geography
-        distance = m.get("distance_miles")
-        within_five = (
-            distance is not None
-            and float(distance) <= 5.0
-        )
         in_mora = z in mora
-        inside = bool(m.get("intersects"))
         is_sel = selected_zip is not None and z == selected_zip
 
-        # Underwriting review geography:
-        # a ZIP is relevant when it intersects the perimeter or is within 5 miles.
-        # Selected and moratorium ZIPs remain relevant even if distance data is absent.
-        relevant = inside or within_five or is_sel or in_mora
+        inside = bool(m.get("intersects")) if m else False
+        distance = m.get("distance_miles") if m else None
+        try:
+            within_five = distance is not None and float(distance) <= 5.0
+        except (TypeError, ValueError):
+            within_five = False
 
-        # REWORK MAP 1.5:
-        # ZIP geometry is primarily an outline. A separate, deliberately
-        # low-opacity context layer supplies only a hint of fill for ZIPs that
-        # actually matter to this fire. The interactive layer never carries a
-        # categorical red/purple/grey block fill.
+        # This is the underwriting review layer: intersecting ZIPs + ZIPs within
+        # five miles of the perimeter. Selected/moratorium ZIPs can still be shown
+        # distinctly, but they do not cause extra labels outside the review zone.
+        review_relevant = inside or within_five
+
         if is_sel:
             line, width = theme.MAP_ZIP_SEL_LINE, theme.MAP_ZIP_SEL_WIDTH
             context_fill, context_kind = theme.MAP_ZIP_SELECTED_FILL, "selected"
@@ -211,12 +285,20 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
         elif inside:
             line, width = theme.MAP_ZIP_INSIDE_LINE, theme.MAP_ZIP_INSIDE_WIDTH
             context_fill, context_kind = theme.MAP_ZIP_INTERSECT_FILL, "intersects"
-        elif relevant:
+        elif within_five:
             line, width = theme.MAP_ZIP_NEAR_LINE, theme.MAP_ZIP_NEAR_WIDTH
-            context_fill, context_kind = theme.MAP_ZIP_CONTEXT_FILL, "relevant"
+            context_fill, context_kind = theme.MAP_ZIP_CONTEXT_FILL, "within-5"
         else:
             line, width = theme.MAP_ZIP_LINE, theme.MAP_ZIP_WIDTH
-            context_fill, context_kind = None, "normal"
+            context_fill, context_kind = None, "exploration"
+
+        # The exploration layer includes every available input ZCTA so the analyst
+        # can zoom outward and hover surrounding ZIPs. Unmeasured ZIPs stay visually
+        # quiet and are never mislabeled as being within the review area.
+        if m:
+            detail = _zcta_detail(m, in_mora)
+        else:
+            detail = f"ZIP {z} · Outside calculated review area"
 
         zfeats.append({
             "type": "Feature", "geometry": f.get("geometry"),
@@ -224,7 +306,7 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
                 "zcta": z,
                 "label": f"ZIP {z}",
                 "name": "", "kind": "",
-                "detail": _zcta_detail(m, in_mora),
+                "detail": detail,
                 "fill": theme.MAP_ZIP_PICK_FILL,
                 "line": line,
                 "width": width,
@@ -232,31 +314,30 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
                 "context_kind": context_kind,
             },
         })
-        if relevant:
-            pt = label_point(perim_shape, f.get("geometry"))
+
+        # Visible labels are intentionally limited to the underwriting review
+        # geography. The right panel remains the complete textual source of truth.
+        if m and review_relevant:
+            pt = label_point(perim_shape, f.get("geometry"), intersects=inside)
             if pt:
-                # Single-line ZIP code only - a two-line label (code + city) rendered
-                # as a solid background box with no visible text in pydeck's TextLayer.
-                # The city name is still available on hover via _zcta_detail().
-                is_intersect = bool(m.get("intersects"))
                 labels.append({
                     "position": list(pt),
                     "text": z,
-                    "distance_miles": m.get("distance_miles"),
-                    "intersects": is_intersect,
+                    "distance_miles": distance,
+                    "intersects": inside,
                     "detail": (
-                        f"{float(m['distance_miles']):.1f} mi"
-                        if m.get("distance_miles") is not None
-                        else "Distance not verified"
+                        "Perimeter intersects"
+                        if inside
+                        else f"{float(distance):.1f} mi"
                     ),
                     "label_color": (
                         theme.MAP_ZIP_LABEL_INTERSECT
-                        if is_intersect
+                        if inside
                         else theme.MAP_ZIP_LABEL_TEXT
                     ),
                     "label_size": (
                         theme.MAP_ZIP_LABEL_INTERSECT_SIZE
-                        if is_intersect
+                        if inside
                         else theme.MAP_ZIP_LABEL_SIZE
                     ),
                 })
@@ -294,27 +375,22 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
         minx, miny, maxx, maxy = perim_shape.bounds
         bbox = [minx, miny, maxx, maxy]
 
-    # Map labels are deliberately selective: perimeter-intersecting ZIPs first,
-    # then the nearest remaining ZIPs. The right panel carries the fuller list.
-    labels.sort(key=lambda x: (not x.get("intersects"),
-                               x.get("distance_miles") is None,
-                               x.get("distance_miles") if x.get("distance_miles") is not None else 999))
-    labels = labels[:8]
+    # Keep map annotation intentionally sparse. Intersections win, then nearest
+    # <=5-mile ZIPs, with collision suppression. The right panel carries the full list.
+    labels = _declutter_labels(labels, max_labels=6)
 
     return {"ok": True, "perimeter": perim_geom, "zctas": zfeats, "labels": labels,
             "places": places, "view": fit_view(list(bbox), context),
             "rings": _ring_features(perim_geom, rings),
             "selected_zip": selected_zip if selected_zip in measured else None,
             "relevant_zips": sorted(
-                measured[z]["zcta"]
-                for z in measured
-                if bool(measured[z].get("intersects"))
+                z
+                for z, rec in measured.items()
+                if bool(rec.get("intersects"))
                 or (
-                    measured[z].get("distance_miles") is not None
-                    and float(measured[z]["distance_miles"]) <= 5.0
+                    rec.get("distance_miles") is not None
+                    and float(rec["distance_miles"]) <= 5.0
                 )
-                or z in mora
-                or (selected_zip is not None and z == selected_zip)
             ),
             "moratorium_zips_shown": sorted(z for z in measured if z in mora)}
 
