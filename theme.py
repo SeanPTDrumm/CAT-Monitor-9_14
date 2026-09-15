@@ -27,8 +27,6 @@ Scope: these tokens are injected by `dashboard.render()` only. Fire Table and
 Fire Detail keep their original light appearance (locked decision - there is no
 global .streamlit/config.toml).
 """
-# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
-
 from __future__ import annotations
 
 # --------------------------------------------------------------------------- #
@@ -94,6 +92,10 @@ MAP_ZIP_SEL_LINE = rgb(RED, 255)            # selected: contrasting outline
 MAP_ZIP_SEL_FILL = rgb(RED, 30)             # selected: subtle translucent fill
 MAP_ZIP_INSIDE_LINE = rgb(TEXT, 240)        # intersects the perimeter
 MAP_ZIP_INSIDE_FILL = rgb(TEXT, 16)         # ...kept light so it cannot mask the fire
+
+# Hover highlight: pale and translucent so the geography stays visible.
+# This explicitly replaces deck.gl's default dark blue/purple auto-highlight.
+MAP_ZIP_HOVER_FILL = [238, 238, 232, 105]
 MAP_MORATORIUM_LINE = rgb(TEXT, 250)        # data state: heavier neutral, no purple
 MAP_MORATORIUM_FILL = rgb(TEXT, 20)
 

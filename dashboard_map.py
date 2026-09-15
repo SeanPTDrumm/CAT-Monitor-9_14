@@ -19,8 +19,6 @@ as it does. This module renders the same source geometry with dashboard cartogra
 
 Every number and outline comes from the stored source geometry. Nothing is sketched.
 """
-# CAT_MONITOR_BUILD: REV_1_3_1_VERIFIED
-
 from __future__ import annotations
 
 import math
@@ -354,7 +352,8 @@ def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> 
             get_line_color="properties.line", get_line_width="properties.width",
             line_width_units=pdk.types.String("pixels"),
             line_width_min_pixels=1,
-            pickable=True, auto_highlight=True))
+            pickable=True, auto_highlight=True,
+            highlight_color=theme.MAP_ZIP_HOVER_FILL))
 
     if prepared["places"]:
         layers.append(pdk.Layer(
