@@ -229,11 +229,28 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
                 # Single-line ZIP code only - a two-line label (code + city) rendered
                 # as a solid background box with no visible text in pydeck's TextLayer.
                 # The city name is still available on hover via _zcta_detail().
-                labels.append({"position": list(pt), "text": z,
-                               "distance_miles": m.get("distance_miles"),
-                               "intersects": bool(m.get("intersects")),
-                               "detail": (f"{float(m['distance_miles']):.1f} mi"
-                                          if m.get("distance_miles") is not None else "Distance not verified")})
+                is_intersect = bool(m.get("intersects"))
+                labels.append({
+                    "position": list(pt),
+                    "text": z,
+                    "distance_miles": m.get("distance_miles"),
+                    "intersects": is_intersect,
+                    "detail": (
+                        f"{float(m['distance_miles']):.1f} mi"
+                        if m.get("distance_miles") is not None
+                        else "Distance not verified"
+                    ),
+                    "label_color": (
+                        theme.MAP_ZIP_LABEL_INTERSECT
+                        if is_intersect
+                        else theme.MAP_ZIP_LABEL_TEXT
+                    ),
+                    "label_size": (
+                        theme.MAP_ZIP_LABEL_INTERSECT_SIZE
+                        if is_intersect
+                        else theme.MAP_ZIP_LABEL_SIZE
+                    ),
+                })
                 context.append(pt)
 
     places: list[dict[str, Any]] = []
@@ -468,22 +485,24 @@ def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> 
         auto_highlight=False,
     ))
 
-    # ZIP labels are selective and sit above the fire without adding more shapes.
+    # Relevant ZIP codes are printed directly on the map so the underwriter
+    # can scan the 5-mile review geography without having to hover every area.
     if prepared["labels"]:
         layers.append(pdk.Layer(
             "TextLayer", id="cm-zip-labels",
             data=prepared["labels"],
             get_position="position",
             get_text="text",
-            get_size=12,
-            get_color=LABEL_TEXT_DARK,
+            get_size="label_size",
+            get_color="label_color",
             get_text_anchor=pdk.types.String("middle"),
             get_alignment_baseline=pdk.types.String("center"),
             font_family="Arial, Helvetica, sans-serif",
             font_weight=700,
-            outline_width=5,
-            get_outline_color=LABEL_OUTLINE,
+            outline_width=6,
+            get_outline_color=theme.MAP_ZIP_LABEL_HALO,
             font_settings=LABEL_FONT_SETTINGS,
+            pickable=False,
         ))
 
     tooltip = {
