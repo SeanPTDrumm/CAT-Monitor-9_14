@@ -39,13 +39,13 @@ import theme
 #
 # The fire perimeter keeps its own strong orange - it is a data colour, it is the
 # subject of the map, and it must stay dominant over every neutral around it.
-PERIM_FILL = [255, 92, 40, 60]      # light: the outline carries the shape
-PERIM_LINE = [255, 92, 40, 255]     # dominant
+PERIM_FILL = [255, 111, 55, 54]      # translucent orange wash
+PERIM_LINE = [255, 82, 36, 255]         # dominant fire outline
+PERIM_LINE_WIDTH = 3.6
 
 ZCTA_LINE = theme.MAP_ZIP_LINE
 ZCTA_RELEVANT_LINE = theme.MAP_ZIP_NEAR_LINE
 MORATORIUM_LINE = theme.MAP_MORATORIUM_LINE
-MORATORIUM_FILL = theme.MAP_MORATORIUM_FILL
 PLACE_RGB = theme.MAP_PLACE[:3]
 PLACE_NEAREST_RGB = theme.MAP_PLACE_NEAREST[:3]
 
@@ -188,24 +188,26 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
         inside = bool(m.get("intersects"))
         is_sel = selected_zip is not None and z == selected_zip
 
-        # Four states, most specific first. Every fill is transparent or very
-        # low-opacity so the basemap - roads, place names, terrain - stays
-        # readable underneath, and none of them can mask the perimeter.
+        # REWORK MAP 1.5:
+        # ZIP geometry is primarily an outline. A separate, deliberately
+        # low-opacity context layer supplies only a hint of fill for ZIPs that
+        # actually matter to this fire. The interactive layer never carries a
+        # categorical red/purple/grey block fill.
         if is_sel:
-            fill, line, width = (theme.MAP_ZIP_SEL_FILL, theme.MAP_ZIP_SEL_LINE,
-                                 theme.MAP_ZIP_SEL_WIDTH)
+            line, width = theme.MAP_ZIP_SEL_LINE, theme.MAP_ZIP_SEL_WIDTH
+            context_fill, context_kind = theme.MAP_ZIP_SELECTED_FILL, "selected"
         elif in_mora:
-            fill, line, width = (theme.MAP_MORATORIUM_FILL, theme.MAP_MORATORIUM_LINE,
-                                 theme.MAP_MORATORIUM_WIDTH)
+            line, width = theme.MAP_MORATORIUM_LINE, theme.MAP_MORATORIUM_WIDTH
+            context_fill, context_kind = theme.MAP_MORATORIUM_FILL, "moratorium"
         elif inside:
-            fill, line, width = (theme.MAP_ZIP_INSIDE_FILL, theme.MAP_ZIP_INSIDE_LINE,
-                                 theme.MAP_ZIP_INSIDE_WIDTH)
+            line, width = theme.MAP_ZIP_INSIDE_LINE, theme.MAP_ZIP_INSIDE_WIDTH
+            context_fill, context_kind = theme.MAP_ZIP_INTERSECT_FILL, "intersects"
         elif relevant:
-            fill, line, width = (theme.MAP_ZIP_NEAR_FILL, theme.MAP_ZIP_NEAR_LINE,
-                                 theme.MAP_ZIP_NEAR_WIDTH)
+            line, width = theme.MAP_ZIP_NEAR_LINE, theme.MAP_ZIP_NEAR_WIDTH
+            context_fill, context_kind = theme.MAP_ZIP_CONTEXT_FILL, "relevant"
         else:
-            fill, line, width = (theme.MAP_ZIP_FILL, theme.MAP_ZIP_LINE,
-                                 theme.MAP_ZIP_WIDTH)
+            line, width = theme.MAP_ZIP_LINE, theme.MAP_ZIP_WIDTH
+            context_fill, context_kind = None, "normal"
 
         zfeats.append({
             "type": "Feature", "geometry": f.get("geometry"),
@@ -214,7 +216,11 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
                 "label": f"ZIP {z}",
                 "name": "", "kind": "",
                 "detail": _zcta_detail(m, in_mora),
-                "fill": fill, "line": line, "width": width,
+                "fill": theme.MAP_ZIP_PICK_FILL,
+                "line": line,
+                "width": width,
+                "context_fill": context_fill,
+                "context_kind": context_kind,
             },
         })
         if relevant or in_mora:
@@ -330,72 +336,173 @@ def _zcta_detail(m: dict[str, Any], in_moratorium: bool) -> str:
 
 
 def deck(prepared: dict[str, Any], fire_name: str, simplify: float = 0.0001) -> pdk.Deck:
-    """Build the dashboard deck. Perimeter is dominant; ZIPs stay readable/clickable."""
+    """Build the dashboard map with a strict visual hierarchy.
+
+    Fire > relevant ZIP boundaries > rings > basemap.
+
+    ZIPs are split into three layers:
+      * pale, non-interactive context fills for relevant ZIPs only;
+      * crisp outline-only boundaries for every ZIP in range;
+      * a transparent pick layer whose only visible effect is a pale hover wash.
+
+    Splitting the layers prevents deck.gl selection/highlight behaviour from
+    turning whole ZIP polygons into opaque red, grey, blue, or purple blocks.
+    """
     from geo import spatial as geo_spatial
 
     layers: list[pdk.Layer] = []
-    # Rings first, underneath everything: they are context, not the subject.
+
+    # 1) Distance rings: context only, drawn below geography and fire.
     if prepared.get("rings"):
         layers.append(pdk.Layer(
             "GeoJsonLayer", id="cm-rings",
             data={"type": "FeatureCollection", "features": prepared["rings"]},
-            stroked=True, filled=False, get_fill_color="properties.fill",
-            get_line_color="properties.line", get_line_width=theme.MAP_RING_WIDTH,
-            line_width_units=pdk.types.String("pixels"), line_width_min_pixels=1,
-            pickable=False))
-
-    if prepared["zctas"]:
-        layers.append(pdk.Layer(
-            "GeoJsonLayer", id=ZIP_LAYER_ID,
-            data={"type": "FeatureCollection", "features": prepared["zctas"]},
-            stroked=True, filled=True, get_fill_color="properties.fill",
-            get_line_color="properties.line", get_line_width="properties.width",
+            stroked=True, filled=False,
+            get_line_color="properties.line",
+            get_line_width=theme.MAP_RING_WIDTH,
             line_width_units=pdk.types.String("pixels"),
             line_width_min_pixels=1,
-            pickable=True, auto_highlight=True,
-            highlight_color=theme.MAP_ZIP_HOVER_FILL))
+            pickable=False,
+        ))
 
+    zctas = prepared.get("zctas") or []
+
+    # 2) Very pale fills only for ZIPs that matter to the current review.
+    context_features = [
+        f for f in zctas
+        if (f.get("properties") or {}).get("context_fill") is not None
+    ]
+    if context_features:
+        layers.append(pdk.Layer(
+            "GeoJsonLayer", id="cm-zip-context",
+            data={"type": "FeatureCollection", "features": context_features},
+            stroked=False, filled=True,
+            get_fill_color="properties.context_fill",
+            opacity=0.13,
+            pickable=False,
+        ))
+
+    # 3) ZIP boundaries. Outline-only: these are geography, not a heat map.
+    if zctas:
+        layers.append(pdk.Layer(
+            "GeoJsonLayer", id="cm-zip-outlines",
+            data={"type": "FeatureCollection", "features": zctas},
+            stroked=True, filled=False,
+            get_line_color="properties.line",
+            get_line_width="properties.width",
+            line_width_units=pdk.types.String("pixels"),
+            line_width_min_pixels=1,
+            pickable=False,
+        ))
+
+        # 4) Transparent interaction surface. Hover gets a pale cream wash.
+        # Keeping this separate from the visible outline/fill layers avoids the
+        # opaque block behaviour that was making the map unreadable.
+        layers.append(pdk.Layer(
+            "GeoJsonLayer", id=ZIP_LAYER_ID,
+            data={"type": "FeatureCollection", "features": zctas},
+            stroked=False, filled=True,
+            get_fill_color="properties.fill",
+            opacity=0.01,
+            pickable=True,
+            auto_highlight=True,
+            highlight_color=theme.MAP_ZIP_HOVER_FILL,
+        ))
+
+    # 5) Population places / labels.
     if prepared["places"]:
         layers.append(pdk.Layer(
-            "ScatterplotLayer", id="cm-places", data=prepared["places"], get_position="[lon, lat]",
-            get_fill_color="color", get_line_color=[10, 15, 25, 220], stroked=True,
-            line_width_min_pixels=1, get_radius="radius", radius_units=pdk.types.String("pixels"),
-            radius_min_pixels=4, radius_max_pixels=10, pickable=True))
+            "ScatterplotLayer", id="cm-places",
+            data=prepared["places"],
+            get_position="[lon, lat]",
+            get_fill_color="color",
+            get_line_color=[255, 255, 255, 225],
+            stroked=True,
+            line_width_min_pixels=1,
+            get_radius="radius",
+            radius_units=pdk.types.String("pixels"),
+            radius_min_pixels=4,
+            radius_max_pixels=10,
+            pickable=True,
+        ))
         layers.append(pdk.Layer(
             "TextLayer", id="cm-place-labels",
             data=[{**p, "text": p["label"], "position": [p["lon"], p["lat"]]}
                   for p in prepared["places"] if p.get("nearest")],
-            get_position="position", get_text="text", get_size=13, get_color=LABEL_TEXT_DARK,
-            get_pixel_offset=[0, -14], get_text_anchor=pdk.types.String("middle"),
-            get_alignment_baseline=pdk.types.String("bottom"), font_family="Arial, Helvetica, sans-serif",
-            font_weight=700, outline_width=6, get_outline_color=LABEL_OUTLINE,
-            font_settings=LABEL_FONT_SETTINGS))
+            get_position="position",
+            get_text="text",
+            get_size=13,
+            get_color=LABEL_TEXT_DARK,
+            get_pixel_offset=[0, -14],
+            get_text_anchor=pdk.types.String("middle"),
+            get_alignment_baseline=pdk.types.String("bottom"),
+            font_family="Arial, Helvetica, sans-serif",
+            font_weight=700,
+            outline_width=6,
+            get_outline_color=LABEL_OUTLINE,
+            font_settings=LABEL_FONT_SETTINGS,
+        ))
 
-    # Perimeter last so nothing draws over the fire.
+    # 6) Fire perimeter is deliberately drawn last among polygon layers so no
+    # ZIP fill, hover state, or ring can visually cover it.
     layers.append(pdk.Layer(
         "GeoJsonLayer", id="cm-perimeter",
         data={"type": "FeatureCollection", "features": [{
-            "type": "Feature", "geometry": geo_spatial.simplify_for_map(prepared["perimeter"], simplify),
-            "properties": {"label": fire_name, "name": "", "kind": "Current fire perimeter",
-                           "detail": ""}}]},
-        stroked=True, filled=True, get_fill_color=PERIM_FILL, get_line_color=PERIM_LINE,
-        line_width_min_pixels=3, pickable=True))
+            "type": "Feature",
+            "geometry": geo_spatial.simplify_for_map(prepared["perimeter"], simplify),
+            "properties": {
+                "label": fire_name,
+                "name": "",
+                "kind": "Current fire perimeter",
+                "detail": "",
+            },
+        }]},
+        stroked=True,
+        filled=True,
+        get_fill_color=PERIM_FILL,
+        get_line_color=PERIM_LINE,
+        line_width_units=pdk.types.String("pixels"),
+        get_line_width=PERIM_LINE_WIDTH,
+        line_width_min_pixels=3,
+        pickable=True,
+        auto_highlight=False,
+    ))
 
+    # ZIP labels are selective and sit above the fire without adding more shapes.
     if prepared["labels"]:
         layers.append(pdk.Layer(
-            "TextLayer", id="cm-zip-labels", data=prepared["labels"],
-            get_position="position", get_text="text",
-            get_size=13, get_color=LABEL_TEXT_DARK, get_text_anchor=pdk.types.String("middle"),
-            get_alignment_baseline=pdk.types.String("center"), font_family="Arial, Helvetica, sans-serif",
-            font_weight=700, outline_width=6, get_outline_color=LABEL_OUTLINE,
-            font_settings=LABEL_FONT_SETTINGS))
+            "TextLayer", id="cm-zip-labels",
+            data=prepared["labels"],
+            get_position="position",
+            get_text="text",
+            get_size=12,
+            get_color=LABEL_TEXT_DARK,
+            get_text_anchor=pdk.types.String("middle"),
+            get_alignment_baseline=pdk.types.String("center"),
+            font_family="Arial, Helvetica, sans-serif",
+            font_weight=700,
+            outline_width=5,
+            get_outline_color=LABEL_OUTLINE,
+            font_settings=LABEL_FONT_SETTINGS,
+        ))
 
-    tooltip = {"html": "<b>{label}</b><br/>{detail}",
-               "style": {"backgroundColor": theme.SURFACE, "color": theme.TEXT,
-                         "border": f"1px solid {theme.BORDER}", "fontSize": "12px",
-                         "fontFamily": theme.FONT}}
-    return pdk.Deck(layers=layers, initial_view_state=prepared["view"],
-                    map_style=maps.CARTO_POSITRON, tooltip=tooltip)
+    tooltip = {
+        "html": "<b>{label}</b><br/>{detail}",
+        "style": {
+            "backgroundColor": theme.SURFACE,
+            "color": theme.TEXT,
+            "border": f"1px solid {theme.BORDER}",
+            "fontSize": "12px",
+            "fontFamily": theme.FONT,
+        },
+    }
+
+    return pdk.Deck(
+        layers=layers,
+        initial_view_state=prepared["view"],
+        map_style=maps.CARTO_POSITRON,
+        tooltip=tooltip,
+    )
 
 
 def caption(prepared: dict[str, Any]) -> str:

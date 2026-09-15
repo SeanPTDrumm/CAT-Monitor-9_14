@@ -77,52 +77,61 @@ def rgb(hex_colour: str, alpha: int = 255) -> list[int]:
 
 
 # --------------------------------------------------------------------------- #
-# Map palette - neutral greys and the brand red only.
+# Map palette — REWORK MAP 1.5
 #
-# Blue and purple are both gone: the old ZCTA_LINE was blue and the moratorium
-# treatment was purple. Moratorium is a DATA state, not branding, so it now
-# reads as a heavier neutral outline and is stated explicitly in the panel
-# rather than being a colour the reviewer has to decode.
+# Visual hierarchy is explicit:
+#   1. Fire perimeter
+#   2. Relevant ZIP/ZCTA boundaries
+#   3. Distance rings
+#   4. Basemap
+#
+# ZIP polygons are no longer risk-colour blocks. Normal ZIPs are outline-only.
+# Relevant/intersecting ZIPs receive only a very pale warm wash on a separate
+# non-interactive layer. The interactive ZIP layer itself is effectively
+# transparent and exists only to provide hover/click affordance.
 # --------------------------------------------------------------------------- #
-MAP_ZIP_LINE = rgb(BORDER, 170)             # normal ZIP: thin, muted
-MAP_ZIP_FILL = [0, 0, 0, 0]                 # normal ZIP: no fill at all
-MAP_ZIP_NEAR_LINE = rgb(TEXT_MUTED, 215)    # near the fire: brighter outline
-MAP_ZIP_NEAR_FILL = rgb(TEXT_MUTED, 14)     # ...and a very low-opacity wash
-MAP_ZIP_SEL_LINE = rgb(RED, 255)            # selected: contrasting outline
-MAP_ZIP_SEL_FILL = rgb(RED, 30)             # selected: subtle translucent fill
-MAP_ZIP_INSIDE_LINE = rgb(TEXT, 240)        # intersects the perimeter
-MAP_ZIP_INSIDE_FILL = rgb(TEXT, 16)         # ...kept light so it cannot mask the fire
 
-# Hover highlight: pale and translucent so the geography stays visible.
-# This explicitly replaces deck.gl's default dark blue/purple auto-highlight.
-MAP_ZIP_HOVER_FILL = [238, 238, 232, 105]
-MAP_MORATORIUM_LINE = rgb(TEXT, 250)        # data state: heavier neutral, no purple
-MAP_MORATORIUM_FILL = rgb(TEXT, 20)
+# Neutral ZIP outlines.
+MAP_ZIP_LINE = [118, 118, 112, 150]
+MAP_ZIP_NEAR_LINE = [105, 105, 100, 205]
+MAP_ZIP_INSIDE_LINE = [86, 86, 82, 235]
+MAP_ZIP_SEL_LINE = [65, 65, 62, 255]
+MAP_MORATORIUM_LINE = [45, 45, 42, 245]
 
-MAP_ZIP_WIDTH = 0.9
-MAP_ZIP_NEAR_WIDTH = 1.6
-MAP_ZIP_SEL_WIDTH = 2.8
-MAP_ZIP_INSIDE_WIDTH = 2.2
-MAP_MORATORIUM_WIDTH = 2.4
+# Pale contextual washes. These are deliberately light and are rendered on a
+# separate layer with an additional layer opacity cap in dashboard_map.py.
+MAP_ZIP_CONTEXT_FILL = [232, 219, 196, 255]     # nearby/relevant
+MAP_ZIP_INTERSECT_FILL = [248, 208, 154, 255]   # perimeter intersection
+MAP_ZIP_SELECTED_FILL = [255, 235, 196, 255]    # selected ZIP
+MAP_MORATORIUM_FILL = [225, 218, 206, 255]
 
-# Distance rings: intentionally visible on the pale CARTO basemap.
-# These are underwriting reference distances, not decoration.
+# Interactive ZIP polygons themselves are transparent. Hover alone supplies
+# the pale temporary fill. This prevents opaque red/grey blocks.
+MAP_ZIP_PICK_FILL = [255, 255, 255, 0]
+MAP_ZIP_HOVER_FILL = [255, 249, 229, 105]       # pale cream hover, never purple
+
+MAP_ZIP_WIDTH = 0.8
+MAP_ZIP_NEAR_WIDTH = 1.15
+MAP_ZIP_INSIDE_WIDTH = 1.55
+MAP_ZIP_SEL_WIDTH = 2.2
+MAP_MORATORIUM_WIDTH = 1.8
+
+# Distance rings are visible reference lines but must remain subordinate to the
+# fire. They use progressively lighter neutral strokes.
 MAP_RING_LINE = {
-    1: rgb(BORDER, 235),
-    3: rgb(BORDER, 205),
-    5: rgb(BORDER, 175),
-    10: rgb(BORDER, 120),
+    1: [90, 90, 86, 185],
+    3: [105, 105, 100, 155],
+    5: [120, 120, 115, 130],
+    10: [135, 135, 130, 100],
 }
-MAP_RING_FILL = [0, 0, 0, 0]        # never filled
-MAP_RING_WIDTH = 1.9
+MAP_RING_FILL = [0, 0, 0, 0]
+MAP_RING_WIDTH = 1.25
 
-MAP_PLACE = rgb(TEXT, 235)
-MAP_PLACE_NEAREST = rgb(RED, 255)   # the nearest place is the one that matters
+MAP_PLACE = [72, 78, 86, 225]
+MAP_PLACE_NEAREST = [207, 36, 30, 255]
 
-# Label treatment: dark glyph with a light halo. Readable on the pale
-# CARTO_POSITRON basemap and over any fill, with no separate background quad
-# that could render while the glyph does not.
-MAP_LABEL_TEXT = [12, 18, 30, 255]
+# Label treatment: dark glyph with a light halo, readable on the pale basemap.
+MAP_LABEL_TEXT = [22, 26, 32, 255]
 MAP_LABEL_OUTLINE = [255, 255, 255, 235]
 
 ATTRIBUTION = "NIFC | Census 2020 ZCTA | CARTO / OpenStreetMap"
