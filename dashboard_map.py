@@ -183,10 +183,19 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
         m = measured.get(z)
         if not m:
             continue                      # beyond 10 mi: not this fire's geography
-        relevant = m.get("review_state") in ("VERIFY", "REVIEW")
+        distance = m.get("distance_miles")
+        within_five = (
+            distance is not None
+            and float(distance) <= 5.0
+        )
         in_mora = z in mora
         inside = bool(m.get("intersects"))
         is_sel = selected_zip is not None and z == selected_zip
+
+        # Underwriting review geography:
+        # a ZIP is relevant when it intersects the perimeter or is within 5 miles.
+        # Selected and moratorium ZIPs remain relevant even if distance data is absent.
+        relevant = inside or within_five or is_sel or in_mora
 
         # REWORK MAP 1.5:
         # ZIP geometry is primarily an outline. A separate, deliberately
@@ -223,7 +232,7 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
                 "context_kind": context_kind,
             },
         })
-        if relevant or in_mora:
+        if relevant:
             pt = label_point(perim_shape, f.get("geometry"))
             if pt:
                 # Single-line ZIP code only - a two-line label (code + city) rendered
@@ -296,8 +305,17 @@ def prepare(spatial: dict[str, Any] | None, inputs: dict[str, Any] | None,
             "places": places, "view": fit_view(list(bbox), context),
             "rings": _ring_features(perim_geom, rings),
             "selected_zip": selected_zip if selected_zip in measured else None,
-            "relevant_zips": sorted(measured[z]["zcta"] for z in measured
-                                    if measured[z].get("review_state") in ("VERIFY", "REVIEW")),
+            "relevant_zips": sorted(
+                measured[z]["zcta"]
+                for z in measured
+                if bool(measured[z].get("intersects"))
+                or (
+                    measured[z].get("distance_miles") is not None
+                    and float(measured[z]["distance_miles"]) <= 5.0
+                )
+                or z in mora
+                or (selected_zip is not None and z == selected_zip)
+            ),
             "moratorium_zips_shown": sorted(z for z in measured if z in mora)}
 
 
