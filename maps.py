@@ -21,7 +21,8 @@ CARTO_VOYAGER = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
 CARTO_POSITRON = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
 STATUS_RGB = {"No Action": [154, 160, 166], "Monitor": [224, 161, 0],
-              "Investigate": [217, 48, 37], "Existing Moratorium": [123, 63, 191]}
+              "Investigate": [217, 48, 37], "Existing Moratorium": [123, 63, 191],
+              "Moratorium": [123, 63, 191]}
 LEVEL_RGB = {1: [108, 142, 191], 2: [224, 161, 0], 3: [217, 48, 37]}
 FIRE_FILL = [200, 30, 30, 110]
 FIRE_LINE = [180, 0, 0, 255]
@@ -95,7 +96,7 @@ def point_record(row: dict[str, Any]) -> dict[str, Any] | None:
 def perimeter_feature(geom: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     status = row.get("status") or "No Action"
     level = int(row.get("urgency_level") or 1)
-    rgb = STATUS_RGB.get(status) if status != "No Action" else LEVEL_RGB[level]
+    rgb = STATUS_RGB.get(status, STATUS_RGB["No Action"]) if status != "No Action" else LEVEL_RGB[level]
     p = point_record(row) or {}
     return {"type": "Feature", "geometry": geom,
             "properties": {**{k: v for k, v in p.items() if k not in ("lon", "lat", "color", "radius")},
